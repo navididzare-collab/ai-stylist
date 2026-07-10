@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>آپلود عکس محصول</title>
+<style>
+  body { font-family: Tahoma, sans-serif; max-width: 500px; margin: 60px auto; }
+  input, button { padding: 10px; margin: 8px 0; width: 100%; box-sizing: border-box; }
+  button { background: #111; color: #fff; border: none; cursor: pointer; font-weight: bold; }
+  #result { margin-top: 20px; padding: 12px; background: #f5f5f5; border-radius: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<h2>آپلود عکس برای محصول</h2>
+
+<label>شماره محصول (product_id):</label>
+<input type="number" id="productId" placeholder="مثلاً 1">
+
+<label>انتخاب عکس‌ها (می‌تونی چند تا با هم انتخاب کنی):</label>
+<input type="file" id="files" multiple accept="image/*">
+
+<button onclick="upload()">آپلود کن</button>
+
+<div id="result"></div>
+
+<script>
+async function upload() {
+  const productId = document.getElementById('productId').value;
+  const filesInput = document.getElementById('files');
+  const resultBox = document.getElementById('result');
+
+  if (!productId) {
+    resultBox.textContent = "لطفاً شماره محصول رو وارد کن.";
+    return;
+  }
+  if (filesInput.files.length === 0) {
+    resultBox.textContent = "لطفاً حداقل یک عکس انتخاب کن.";
+    return;
+  }
+
+  const formData = new FormData();
+  for (const file of filesInput.files) {
+    formData.append("files", file);
+  }
+
+  resultBox.textContent = "در حال آپلود...";
+
+  try {
+    const response = await fetch(`http://localhost:8000/product-images/${productId}`, {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+    resultBox.textContent = "نتیجه:\n" + JSON.stringify(data, null, 2);
+  } catch (err) {
+    resultBox.textContent = "خطا: " + err.message;
+  }
+}
+</script>
+
+</body>
+</html>
