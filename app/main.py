@@ -8,7 +8,7 @@ from app.api.products import router as products_router
 from app.api.customers import router as customers_router
 from app.api.chat import router as chat_router
 from app.api.recommendations import router as recommendations_router
-from app.api.product_images import router as product_images_router
+# from app.api.product_images import router as product_images_router
 from app.api.product_search import router as product_search_router
 from app.api.tryon import router as tryon_router
 
@@ -36,7 +36,7 @@ app.include_router(products_router)
 app.include_router(customers_router)
 app.include_router(chat_router)
 app.include_router(recommendations_router)
-app.include_router(product_images_router)
+# app.include_router(product_images_router)
 app.include_router(tryon_router)
 
 
