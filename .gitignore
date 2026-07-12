@@ -2,7 +2,6 @@
 .venv/
 __pycache__/
 *.pyc
-*.db
 
 # Node / Next.js
 frontend/node_modules/
@@ -16,5 +15,3 @@ frontend/.env.local
 # OS
 .DS_Store
 Thumbs.db
-
-
