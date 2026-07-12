@@ -11,7 +11,7 @@ from app.api.recommendations import router as recommendations_router
 from app.api.product_images import router as product_images_router
 from app.api.product_search import router as product_search_router
 from app.api.tryon import router as tryon_router
-app = FastAPI(title="AI Stylist API")
+app = FastAPI(title="Jest Agent API")
 # نمایش فایل‌های استاتیک (عکس محصولات)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 # اجازه اتصال فرانت‌اند
@@ -38,7 +38,7 @@ app.include_router(tryon_router)
 @app.get("/")
 def root():
     return {
-        "message": "AI Stylist API is running."
+        "message": "Jest Agent API is running."
     }
 @app.get("/admin", response_class=HTMLResponse)
 def admin_panel():

@@ -6,13 +6,13 @@ router = APIRouter()
 @router.get("/")
 def home():
     return {
-        "message": "Welcome to AI Stylist 🚀"
+        "message": "Welcome to Jest Agent 🚀"
     }
 
 
 @router.get("/about")
 def about():
     return {
-        "project": "AI Stylist",
+        "project": "Jest Agent",
         "version": "0.1.0"
     }
