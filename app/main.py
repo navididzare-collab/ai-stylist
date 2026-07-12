@@ -19,7 +19,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        ""https://app-nextjs-y6oow.apps.de1.abrhapaas.com",",
+        "https://app-nextjs-qot75.apps.de1.abrhapaas.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
