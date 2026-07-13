@@ -42,5 +42,4 @@ def root():
     }
 @app.get("/admin", response_class=HTMLResponse)
 def admin_panel():
-    with open("app/templates/admin.html", "r", encoding="utf-8") as f:
-        return f.read()
+    return "<h1>TEST123 - REBUILD WORKS</h1>"
