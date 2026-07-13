@@ -48,7 +48,7 @@ def call_model_with_retries(content, attempts: int = 3, initial_delay: float = 3
     for attempt in range(1, attempts + 1):
         try:
             return client.chat.completions.create(
-                model="google/gemini-2.5-flash-image",
+                model="google/gemini-3-pro-image-preview",
                 modalities=["image", "text"],
                 messages=[{"role": "user", "content": content}],
             )
