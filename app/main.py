@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 load_dotenv()
 from app.api.products import router as products_router
@@ -39,3 +40,7 @@ def root():
     return {
         "message": "Jest Agent API is running."
     }
+@app.get("/admin", response_class=HTMLResponse)
+def admin_panel():
+    with open("app/templates/admin.html", "r", encoding="utf-8") as f:
+        return f.read()

@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>پنل مدیریت - Jest Agent</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Tahoma, "Segoe UI", sans-serif;
+    background: #f4f4f5;
+    margin: 0;
+    color: #18181b;
+  }
+  header {
+    background: #18181b;
+    color: #fff;
+    padding: 18px 32px;
+    font-size: 20px;
+    font-weight: bold;
+  }
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+  }
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #e4e4e7;
+  }
+  .tab-btn {
+    padding: 10px 20px;
+    background: none;
+    border: none;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #71717a;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+  }
+  .tab-btn.active {
+    color: #18181b;
+    border-bottom: 2px solid #18181b;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  }
+  .card h3 {
+    margin-top: 0;
+    font-size: 15px;
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .table-scroll {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  @media (max-width: 700px) {
+    .container {
+      padding: 16px 10px 40px;
+    }
+    header {
+      padding: 14px 16px;
+      font-size: 17px;
+    }
+    .form-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+    table {
+      min-width: 640px;
+    }
+  }
+  @media (max-width: 420px) {
+    .form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  label {
+    font-size: 12px;
+    color: #52525b;
+    display: block;
+    margin-bottom: 4px;
+  }
+  input[type=text], input[type=number], select {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid #d4d4d8;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fff;
+  }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 22px;
+  }
+  button.primary {
+    background: #18181b;
+    color: #fff;
+    border: none;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 14px;
+  }
+  button.primary:hover { background: #333; }
+  button.danger {
+    background: #dc2626;
+    color: #fff;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: #f4f4f5;
+    color: #18181b;
+    border: 1px solid #d4d4d8;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: right;
+    padding: 10px 8px;
+    border-bottom: 1px solid #e4e4e7;
+  }
+  th { color: #71717a; font-weight: bold; }
+  .msg {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    display: none;
+  }
+  .msg.success { background: #dcfce7; color: #166534; display: block; }
+  .msg.error { background: #fee2e2; color: #991b1b; display: block; }
+
+  .img-thumb {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #e4e4e7;
+  }
+  .img-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .img-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .empty-note {
+    color: #a1a1aa;
+    font-size: 13px;
+    padding: 20px 0;
+    text-align: center;
+  }
+
+  /* ---------- CHAT ---------- */
+  .chat-shell {
+    display: flex;
+    flex-direction: column;
+    height: 620px;
+    background: #fff;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  }
+  .chat-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    background: linear-gradient(135deg,#18181b,#3f3f46);
+    color: #fff;
+  }
+  .chat-topbar-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: bold;
+  }
+  .chat-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg,#6366f1,#a855f7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .chat-topbar-sub {
+    font-size: 11px;
+    color: #d4d4d8;
+    font-weight: normal;
+    margin-top: 2px;
+  }
+  .chat-cid {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chat-cid label {
+    color: #d4d4d8;
+    margin: 0;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .chat-cid input {
+    width: 64px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: none;
+    font-size: 12px;
+    text-align: center;
+  }
+  .chat-clear-btn {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .chat-clear-btn:hover { background: rgba(255,255,255,0.22); }
+
+  .chat-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    background: #f9f9fb;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .chat-row { display: flex; }
+  .chat-row.user { justify-content: flex-start; }
+  .chat-row.assistant { justify-content: flex-end; }
+
+  .chat-bubble-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 72%;
+  }
+  .chat-bubble {
+    padding: 11px 15px;
+    border-radius: 16px;
+    font-size: 13.5px;
+    line-height: 1.9;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .chat-row.user .chat-bubble {
+    background: #18181b;
+    color: #fff;
+    border-bottom-left-radius: 4px;
+  }
+  .chat-row.assistant .chat-bubble {
+    background: #fff;
+    color: #18181b;
+    border: 1px solid #e4e4e7;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-time {
+    font-size: 10px;
+    color: #a1a1aa;
+    padding: 0 4px;
+  }
+  .chat-row.user .chat-time { text-align: right; }
+  .chat-row.assistant .chat-time { text-align: left; }
+
+  .chat-products {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .chat-product-card {
+    flex-shrink: 0;
+    width: 130px;
+    background: #fff;
+    border: 1px solid #e4e4e7;
+    border-radius: 12px;
+    overflow: hidden;
+    text-align: center;
+  }
+  .chat-product-card img {
+    width: 100%;
+    height: 100px;
+    object-fit: cover;
+    background: #f4f4f5;
+    display: block;
+  }
+  .chat-product-card .cp-body { padding: 8px; }
+  .chat-product-card .cp-name {
+    font-size: 11px;
+    font-weight: bold;
+    color: #18181b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chat-product-card .cp-price {
+    font-size: 11px;
+    color: #52525b;
+    margin-top: 3px;
+  }
+
+  .typing-dots {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px 2px;
+  }
+  .typing-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #a1a1aa;
+    animation: typingBounce 1.2s infinite ease-in-out;
+  }
+  .typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  .chat-input-bar {
+    display: flex;
+    gap: 10px;
+    padding: 14px 16px;
+    background: #fff;
+    border-top: 1px solid #e4e4e7;
+  }
+  .chat-input-bar textarea {
+    flex: 1;
+    resize: none;
+    border: 1px solid #d4d4d8;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-family: inherit;
+    max-height: 90px;
+    line-height: 1.6;
+  }
+  .chat-input-bar textarea:focus { outline: none; border-color: #a1a1aa; }
+  .chat-send-btn {
+    background: #18181b;
+    color: #fff;
+    border: none;
+    width: 46px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .chat-send-btn:hover { background: #333; }
+  .chat-send-btn:disabled { background: #d4d4d8; cursor: not-allowed; }
+
+  .chat-empty-state {
+    margin: auto;
+    text-align: center;
+    color: #a1a1aa;
+    font-size: 13px;
+  }
+  .chat-empty-state .chat-empty-icon {
+    font-size: 34px;
+    margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+
+<header>پنل مدیریت فروشگاه Jest Agent</header>
+
+<div class="container">
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="products">محصولات</button>
+    <button class="tab-btn" data-tab="images">عکس‌ها</button>
+    <button class="tab-btn" data-tab="customers">مشتریان</button>
+    <button class="tab-btn" data-tab="chat">تست چت</button>
+  </div>
+
+  <!-- ================= PRODUCTS TAB ================= -->
+  <div class="tab-content active" id="tab-products">
+
+    <div class="card">
+      <h3 id="product-form-title">افزودن محصول جدید</h3>
+      <input type="hidden" id="product-edit-id">
+      <div class="form-grid">
+        <div><label>نام محصول</label><input type="text" id="p-name"></div>
+        <div><label>برند</label><input type="text" id="p-brand"></div>
+        <div>
+          <label>دسته‌بندی</label>
+          <select id="p-category">
+            <option value="تیشرت">تیشرت</option>
+            <option value="شلوار">شلوار</option>
+            <option value="کاپشن">کاپشن</option>
+            <option value="کفش">کفش</option>
+            <option value="هودی">هودی</option>
+            <option value="اکسسوری">اکسسوری</option>
+            <option value="اسپرت">اسپرت</option>
+            <option value="رسمی">رسمی</option>
+          </select>
+        </div>
+
+        <div><label>رنگ</label><input type="text" id="p-color"></div>
+        <div>
+          <label>سایز</label>
+          <select id="p-size">
+            <option value="M">M</option>
+            <option value="L">L</option>
+            <option value="XL">XL</option>
+            <option value="XXL">XXL</option>
+            <option value="XXXL">XXXL</option>
+          </select>
+        </div>
+        <div><label>جنس</label><input type="text" id="p-material"></div>
+
+        <div>
+          <label>جنسیت</label>
+          <select id="p-gender">
+            <option value="مردانه">مردانه</option>
+            <option value="زنانه">زنانه</option>
+            <option value="بچگانه">بچگانه</option>
+            <option value="یونیسکس">یونیسکس</option>
+          </select>
+        </div>
+        <div>
+          <label>فصل</label>
+          <select id="p-season">
+            <option value="بهار">بهار</option>
+            <option value="تابستان">تابستان</option>
+            <option value="پاییز">پاییز</option>
+            <option value="زمستان">زمستان</option>
+            <option value="همه فصل">همه فصل</option>
+          </select>
+        </div>
+        <div>
+          <label>مناسبت</label>
+          <select id="p-occasion">
+            <option value="روزمره">روزمره</option>
+            <option value="رسمی">رسمی</option>
+            <option value="ورزشی">ورزشی</option>
+            <option value="مهمانی">مهمانی</option>
+          </select>
+        </div>
+
+        <div><label>قیمت (تومان)</label><input type="number" id="p-price"></div>
+        <div><label>موجودی</label><input type="number" id="p-stock"></div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="p-active" checked>
+          <label style="margin:0">فعال باشد</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="p-featured">
+          <label style="margin:0">افزودن به تخفیف‌های ویژه</label>
+        </div>
+      </div>
+
+      <button class="primary" id="product-submit-btn" onclick="saveProduct()">ثبت محصول</button>
+      <button class="secondary" style="margin-top:14px; display:none" id="product-cancel-btn" onclick="resetProductForm()">لغو ویرایش</button>
+      <div class="msg" id="product-msg"></div>
+    </div>
+
+    <div class="card">
+      <h3>لیست محصولات</h3>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>نام</th>
+              <th>برند</th>
+              <th>دسته</th>
+              <th>قیمت</th>
+              <th>موجودی</th>
+              <th>وضعیت</th>
+              <th>ویژه</th>
+              <th>عملیات</th>
+            </tr>
+          </thead>
+          <tbody id="products-table-body"></tbody>
+        </table>
+      </div>
+      <div class="empty-note" id="products-empty" style="display:none">محصولی ثبت نشده است.</div>
+    </div>
+
+  </div>
+
+  <!-- ================= IMAGES TAB ================= -->
+  <div class="tab-content" id="tab-images">
+
+    <div class="card">
+      <h3>آپلود عکس برای محصول</h3>
+      <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+        <div>
+          <label>انتخاب محصول</label>
+          <select id="img-product-select" onchange="loadProductImages()"></select>
+        </div>
+        <div>
+          <label>انتخاب عکس‌ها (چند تایی)</label>
+          <input type="file" id="img-files" multiple accept="image/*">
+        </div>
+      </div>
+      <button class="primary" onclick="uploadImages()">آپلود عکس</button>
+      <div class="msg" id="image-msg"></div>
+
+      <div class="img-list" id="images-list"></div>
+      <div class="empty-note" id="images-empty" style="display:none">عکسی برای این محصول ثبت نشده.</div>
+    </div>
+
+  </div>
+
+  <!-- ================= CUSTOMERS TAB ================= -->
+  <div class="tab-content" id="tab-customers">
+    <div class="card">
+      <h3>مشتریان</h3>
+      <div class="empty-note">این بخش به‌زودی تکمیل می‌شود.</div>
+    </div>
+  </div>
+
+  <!-- ================= CHAT TAB ================= -->
+  <div class="tab-content" id="tab-chat">
+    <div class="chat-shell">
+      <div class="chat-topbar">
+        <div class="chat-topbar-title">
+          <div class="chat-avatar">🤖</div>
+          <div>
+            دستیار هوش مصنوعی Jest Agent
+            <div class="chat-topbar-sub">تست گفتگو با موتور پیشنهاد محصول</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:14px;">
+          <div class="chat-cid">
+            <label>شناسه مشتری</label>
+            <input type="number" id="chat-customer-id" value="1" min="1">
+          </div>
+          <button class="chat-clear-btn" onclick="clearChat()">پاک کردن گفتگو</button>
+        </div>
+      </div>
+
+      <div class="chat-body" id="chat-body">
+        <div class="chat-empty-state" id="chat-empty-state">
+          <div class="chat-empty-icon">💬</div>
+          یه پیام بفرست تا گفتگو با دستیار شروع بشه
+        </div>
+      </div>
+
+      <div class="chat-input-bar">
+        <textarea id="chat-input" rows="1" placeholder="پیامت رو بنویس... (Enter برای ارسال)"></textarea>
+        <button class="chat-send-btn" id="chat-send-btn" onclick="sendChatMessage()">➤</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = "";
+
+// ---------- TABS ----------
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "images") {
+      populateImageProductSelect();
+    }
+  });
+});
+
+// ---------- PRODUCTS ----------
+function showMsg(id, text, type) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = "msg " + type;
+  setTimeout(() => { el.style.display = "none"; }, 4000);
+}
+
+function getProductFormData() {
+  return {
+    name: document.getElementById("p-name").value,
+    brand: document.getElementById("p-brand").value,
+    category: document.getElementById("p-category").value,
+    color: document.getElementById("p-color").value,
+    size: document.getElementById("p-size").value,
+    material: document.getElementById("p-material").value,
+    gender: document.getElementById("p-gender").value,
+    season: document.getElementById("p-season").value,
+    occasion: document.getElementById("p-occasion").value,
+    price: parseFloat(document.getElementById("p-price").value) || 0,
+    stock: parseInt(document.getElementById("p-stock").value) || 0,
+    is_active: document.getElementById("p-active").checked,
+    is_featured: document.getElementById("p-featured").checked,
+  };
+}
+
+function resetProductForm() {
+  document.getElementById("product-edit-id").value = "";
+  document.getElementById("p-name").value = "";
+  document.getElementById("p-brand").value = "";
+  document.getElementById("p-category").value = "";
+  document.getElementById("p-color").value = "";
+  document.getElementById("p-size").value = "";
+  document.getElementById("p-material").value = "";
+  document.getElementById("p-price").value = "";
+  document.getElementById("p-stock").value = "";
+  document.getElementById("p-active").checked = true;
+  document.getElementById("p-featured").checked = false;
+  document.getElementById("product-form-title").textContent = "افزودن محصول جدید";
+  document.getElementById("product-submit-btn").textContent = "ثبت محصول";
+  document.getElementById("product-cancel-btn").style.display = "none";
+}
+
+async function saveProduct() {
+  const editId = document.getElementById("product-edit-id").value;
+  const data = getProductFormData();
+
+  if (!data.name || !data.brand) {
+    showMsg("product-msg", "نام و برند محصول الزامی است.", "error");
+    return;
+  }
+
+  try {
+    let res;
+    if (editId) {
+      res = await fetch(`${API}/products/${editId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+    } else {
+      res = await fetch(`${API}/products/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+    }
+
+    if (!res.ok) throw new Error("خطا در ذخیره محصول");
+
+    showMsg("product-msg", editId ? "محصول ویرایش شد." : "محصول ثبت شد.", "success");
+    resetProductForm();
+    loadProducts();
+  } catch (err) {
+    showMsg("product-msg", "خطا: " + err.message, "error");
+  }
+}
+
+function editProduct(product) {
+  document.getElementById("product-edit-id").value = product.id;
+  document.getElementById("p-name").value = product.name;
+  document.getElementById("p-brand").value = product.brand;
+  document.getElementById("p-category").value = product.category;
+  document.getElementById("p-color").value = product.color;
+  document.getElementById("p-size").value = product.size;
+  document.getElementById("p-material").value = product.material;
+  document.getElementById("p-gender").value = product.gender;
+  document.getElementById("p-season").value = product.season;
+  document.getElementById("p-occasion").value = product.occasion;
+  document.getElementById("p-price").value = product.price;
+  document.getElementById("p-stock").value = product.stock;
+  document.getElementById("p-active").checked = product.is_active;
+  document.getElementById("p-featured").checked = product.is_featured;
+  document.getElementById("product-form-title").textContent = "ویرایش محصول #" + product.id;
+  document.getElementById("product-submit-btn").textContent = "ذخیره تغییرات";
+  document.getElementById("product-cancel-btn").style.display = "inline-block";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function toggleFeatured(id, currentValue) {
+  const product = cachedProducts.find(p => p.id === id);
+  if (!product) return;
+
+  const updatedData = {
+    name: product.name,
+    brand: product.brand,
+    category: product.category,
+    color: product.color,
+    size: product.size,
+    material: product.material,
+    gender: product.gender,
+    season: product.season,
+    occasion: product.occasion,
+    price: product.price,
+    stock: product.stock,
+    is_active: product.is_active,
+    is_featured: !currentValue,
+  };
+
+  try {
+    const res = await fetch(`${API}/products/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedData),
+    });
+    if (!res.ok) throw new Error("خطا در تغییر وضعیت ویژه");
+    loadProducts();
+  } catch (err) {
+    alert("خطا: " + err.message);
+  }
+}
+
+async function deleteProduct(id) {
+  if (!confirm("مطمئنی می‌خوای این محصول حذف بشه؟")) return;
+  try {
+    const res = await fetch(`${API}/products/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("خطا در حذف");
+    loadProducts();
+  } catch (err) {
+    alert("خطا: " + err.message);
+  }
+}
+
+let cachedProducts = [];
+
+async function loadProducts() {
+  const tbody = document.getElementById("products-table-body");
+  const empty = document.getElementById("products-empty");
+  tbody.innerHTML = "";
+
+  try {
+    const res = await fetch(`${API}/products/`);
+    const products = await res.json();
+    cachedProducts = products;
+
+    if (!products.length) {
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+
+    products.forEach(p => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${p.id}</td>
+        <td>${p.name}</td>
+        <td>${p.brand}</td>
+        <td>${p.category}</td>
+        <td>${Number(p.price).toLocaleString()} تومان</td>
+        <td>${p.stock}</td>
+        <td>${p.is_active ? "فعال" : "غیرفعال"}</td>
+        <td>${p.is_featured ? "⭐ ویژه" : "-"}</td>
+        <td>
+          <button class="secondary" onclick='editProduct(${JSON.stringify(p).replace(/'/g, "&apos;")})'>ویرایش</button>
+          <button class="secondary" onclick="toggleFeatured(${p.id}, ${p.is_featured ? "true" : "false"})">${p.is_featured ? "حذف از ویژه" : "افزودن به ویژه"}</button>
+          <button class="danger" onclick="deleteProduct(${p.id})">حذف</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    empty.style.display = "block";
+    empty.textContent = "خطا در دریافت محصولات.";
+  }
+}
+
+// ---------- IMAGES ----------
+async function populateImageProductSelect() {
+  const select = document.getElementById("img-product-select");
+  select.innerHTML = "";
+
+  if (!cachedProducts.length) {
+    await loadProducts();
+  }
+
+  cachedProducts.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = `#${p.id} - ${p.name}`;
+    select.appendChild(opt);
+  });
+
+  if (cachedProducts.length) {
+    loadProductImages();
+  }
+}
+
+async function loadProductImages() {
+  const productId = document.getElementById("img-product-select").value;
+  const list = document.getElementById("images-list");
+  const empty = document.getElementById("images-empty");
+  list.innerHTML = "";
+
+  if (!productId) return;
+
+  try {
+    const res = await fetch(`${API}/product-images/${productId}`);
+    const images = await res.json();
+
+    if (!images.length) {
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+
+    images.forEach(img => {
+      const div = document.createElement("div");
+      div.className = "img-item";
+      div.innerHTML = `
+        <img class="img-thumb" src="${img.image_url}">
+        <button class="danger" onclick="deleteImage(${img.id})">حذف</button>
+      `;
+      list.appendChild(div);
+    });
+  } catch (err) {
+    empty.style.display = "block";
+    empty.textContent = "خطا در دریافت عکس‌ها.";
+  }
+}
+
+async function uploadImages() {
+  const productId = document.getElementById("img-product-select").value;
+  const filesInput = document.getElementById("img-files");
+
+  if (!productId) {
+    showMsg("image-msg", "ابتدا یک محصول انتخاب کن.", "error");
+    return;
+  }
+  if (!filesInput.files.length) {
+    showMsg("image-msg", "حداقل یک عکس انتخاب کن.", "error");
+    return;
+  }
+
+  const formData = new FormData();
+  for (const file of filesInput.files) {
+    formData.append("files", file);
+  }
+
+  try {
+    const res = await fetch(`${API}/product-images/${productId}`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) throw new Error("خطا در آپلود");
+
+    showMsg("image-msg", "عکس‌ها با موفقیت آپلود شدند.", "success");
+    filesInput.value = "";
+    loadProductImages();
+  } catch (err) {
+    showMsg("image-msg", "خطا: " + err.message, "error");
+  }
+}
+
+async function deleteImage(imageId) {
+  if (!confirm("این عکس حذف بشه؟")) return;
+  try {
+    const res = await fetch(`${API}/product-images/${imageId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("خطا در حذف عکس");
+    loadProductImages();
+  } catch (err) {
+    alert("خطا: " + err.message);
+  }
+}
+
+// ---------- CHAT ----------
+function formatTime() {
+  const d = new Date();
+  return d.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function hideChatEmptyState() {
+  const empty = document.getElementById("chat-empty-state");
+  if (empty) empty.remove();
+}
+
+function scrollChatToBottom() {
+  const body = document.getElementById("chat-body");
+  body.scrollTop = body.scrollHeight;
+}
+
+function appendUserBubble(text) {
+  hideChatEmptyState();
+  const body = document.getElementById("chat-body");
+  const row = document.createElement("div");
+  row.className = "chat-row user";
+  row.innerHTML = `
+    <div class="chat-bubble-wrap">
+      <div class="chat-bubble"></div>
+      <div class="chat-time">${formatTime()}</div>
+    </div>
+  `;
+  row.querySelector(".chat-bubble").textContent = text;
+  body.appendChild(row);
+  scrollChatToBottom();
+}
+
+function appendTypingIndicator() {
+  const body = document.getElementById("chat-body");
+  const row = document.createElement("div");
+  row.className = "chat-row assistant";
+  row.id = "chat-typing-row";
+  row.innerHTML = `
+    <div class="chat-bubble-wrap">
+      <div class="chat-bubble">
+        <div class="typing-dots"><span></span><span></span><span></span></div>
+      </div>
+    </div>
+  `;
+  body.appendChild(row);
+  scrollChatToBottom();
+}
+
+function removeTypingIndicator() {
+  const row = document.getElementById("chat-typing-row");
+  if (row) row.remove();
+}
+
+function getProductImage(p) {
+  if (p.image_url) return p.image_url;
+  if (p.images && p.images.length) {
+    const main = p.images.find(i => i.is_main) || p.images[0];
+    return main.image_url;
+  }
+  return "";
+}
+
+function appendAssistantBubble(text, products) {
+  const body = document.getElementById("chat-body");
+  const row = document.createElement("div");
+  row.className = "chat-row assistant";
+
+  let productsHtml = "";
+  if (products && products.length) {
+    productsHtml = `<div class="chat-products">` + products.map(p => {
+      const img = getProductImage(p);
+      const price = p.price ? Number(p.price).toLocaleString() + " تومان" : "";
+      return `
+        <div class="chat-product-card">
+          ${img ? `<img src="${img}">` : `<div style="height:100px;background:#f4f4f5;"></div>`}
+          <div class="cp-body">
+            <div class="cp-name">${p.name || ""}</div>
+            <div class="cp-price">${price}</div>
+          </div>
+        </div>
+      `;
+    }).join("") + `</div>`;
+  }
+
+  row.innerHTML = `
+    <div class="chat-bubble-wrap">
+      <div class="chat-bubble"></div>
+      ${productsHtml}
+      <div class="chat-time">${formatTime()}</div>
+    </div>
+  `;
+  row.querySelector(".chat-bubble").textContent = text;
+  body.appendChild(row);
+  scrollChatToBottom();
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById("chat-input");
+  const sendBtn = document.getElementById("chat-send-btn");
+  const customerIdInput = document.getElementById("chat-customer-id");
+  const text = input.value.trim();
+
+  if (!text) return;
+
+  const customerId = parseInt(customerIdInput.value) || 1;
+
+  appendUserBubble(text);
+  input.value = "";
+  input.style.height = "auto";
+  sendBtn.disabled = true;
+  appendTypingIndicator();
+
+  try {
+    const res = await fetch(`${API}/chat/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_id: customerId, message: text }),
+    });
+
+    removeTypingIndicator();
+
+    if (!res.ok) throw new Error("خطا در دریافت پاسخ از دستیار");
+
+    const data = await res.json();
+    appendAssistantBubble(data.message || "(پاسخی دریافت نشد)", data.products);
+  } catch (err) {
+    removeTypingIndicator();
+    appendAssistantBubble("⚠️ خطا در ارتباط با دستیار: " + err.message, []);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+function clearChat() {
+  if (!confirm("گفتگوی فعلی پاک بشه؟")) return;
+  const body = document.getElementById("chat-body");
+  body.innerHTML = `
+    <div class="chat-empty-state" id="chat-empty-state">
+      <div class="chat-empty-icon">💬</div>
+      یه پیام بفرست تا گفتگو با دستیار شروع بشه
+    </div>
+  `;
+}
+
+document.getElementById("chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage();
+  }
+});
+
+document.getElementById("chat-input").addEventListener("input", function () {
+  this.style.height = "auto";
+  this.style.height = Math.min(this.scrollHeight, 90) + "px";
+});
+
+// ---------- INIT ----------
+loadProducts();
+</script>
+
+</body>
+</html>
