@@ -27,10 +27,24 @@ BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 MAX_IMAGE_DIMENSION = 1024
 JPEG_QUALITY = 78
 
+# اگه مدل تشخیص بده عکس آپلودی انسان نیست، به‌جای ساختن عکس، باید متنی که
+# دقیقاً با این رشته شروع می‌شه رو برگردونه تا کد بتونه این حالت رو تشخیص
+# بده و پیام مناسب به کاربر نشون بده.
+NO_PERSON_MARKER = "ERROR_NO_PERSON_DETECTED"
+
+# اگه سیستم پشت فیلترشکن باشه (مثلاً v2rayN لوکال)، آدرس پروکسی رو از env
+# می‌خونیم و به httpx می‌دیم. اگه این env ست نشده باشه (مثلاً روی سرور آنلاین
+# که خودش دسترسی داره)، هیچ پروکسی‌ای اعمال نمی‌شه و مستقیم وصل می‌شه.
+PROXY_URL = os.getenv("HTTP_PROXY_URL")
+
+_http_client_kwargs = {"timeout": httpx.Timeout(180.0, connect=20.0)}
+if PROXY_URL:
+    _http_client_kwargs["proxy"] = PROXY_URL
+
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     base_url="https://openrouter.ai/api/v1",
-    http_client=httpx.Client(timeout=httpx.Timeout(180.0, connect=20.0)),
+    http_client=httpx.Client(**_http_client_kwargs),
     timeout=180.0,
     max_retries=2,
 )
@@ -135,6 +149,71 @@ def save_result_image(result_b64: str) -> str:
     return f"{BASE_URL}/static/uploads/tryon/{filename}"
 
 
+def image_contains_person(person_data_url: str) -> bool:
+    """
+    قبل از رفتن سراغ کار اصلی (که گرون‌تره و ممکنه مدل به‌جای رد کردن یه
+    آدم تخیلی بسازه)، با یه درخواست سبک و فقط-متنی از مدل می‌پرسیم آیا این
+    عکس واقعاً یک عکس واقعی از یک انسانه یا نه. اینجا خود کد پایتون تصمیم
+    نهایی رو می‌گیره، نه اینکه به فرمت پاسخ مدل توی کار اصلی (تولید عکس)
+    اعتماد کنیم.
+    """
+    question = [
+        {
+            "type": "text",
+            "text": (
+                "Look at the attached image very carefully. Answer with ONLY a single "
+                "word, nothing else: reply exactly 'YES' if this image is an actual "
+                "photograph that clearly shows a real human being's body and/or face, "
+                "physically present in the frame. Reply exactly 'NO' if it is anything "
+                "else — including product photos, clothing laid out or on a mannequin, "
+                "logos, icons, badges, circular/framed graphic designs, illustrations, "
+                "3D renders, cartoons, objects, animals, landscapes, documents, "
+                "screenshots, text, or blank/solid-color images. If you are not highly "
+                "confident it is a genuine photo of a real human, reply 'NO'. Reply with "
+                "just YES or NO, no punctuation, no explanation."
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": person_data_url}},
+    ]
+
+    try:
+        completion = client.chat.completions.create(
+            model="google/gemini-3-pro-image-preview",
+            modalities=["text"],
+            messages=[{"role": "user", "content": question}],
+        )
+    except Exception as e:
+        print("=== PERSON CHECK EXCEPTION, FAILING OPEN ===", repr(e))
+        # اگه خود این چک به هر دلیلی (مثلاً مشکل شبکه) شکست خورد، اجازه
+        # می‌دیم فرآیند اصلی ادامه پیدا کنه به‌جای اینکه کاربر بی‌دلیل بلاک بشه.
+        return True
+
+    answer = (completion.choices[0].message.content or "").strip().upper()
+    print("=== PERSON CHECK ANSWER ===", answer)
+    return answer.startswith("YES")
+
+
+def ensure_person_image(person_data_url: str) -> None:
+    if not image_contains_person(person_data_url):
+        raise HTTPException(
+            status_code=400,
+            detail="عکسی که آپلود کردید تصویر یک انسان نیست. لطفاً یک عکس تمام‌قد و واضح از خودتان آپلود کنید.",
+        )
+
+
+def check_no_person_response(message):
+    """
+    لایه‌ی دوم و پشتیبان: اگه مدل توی همون کار اصلی هم به‌جای عکس، پیام متنی
+    حاوی نشانه‌ی NO_PERSON_MARKER برگردونده باشه، همون پیام واضح رو نشون بده.
+    """
+    text = (message.content or "")
+    if NO_PERSON_MARKER in text:
+        raise HTTPException(
+            status_code=400,
+            detail="عکسی که آپلود کردید تصویر یک انسان نیست. لطفاً یک عکس تمام‌قد و واضح از خودتان آپلود کنید.",
+        )
+
+
 # این خط به‌صورت مشترک به هر دو پرامپت (تک‌محصول و ست) اضافه می‌شه تا صریحاً
 # و با قاطعیت تأکید کنه که مدل هیچ تغییر دیگه‌ای غیر از عوض کردن لباس نده.
 STRICT_NO_EXTRA_CHANGES_RULE = (
@@ -154,6 +233,32 @@ STRICT_NO_EXTRA_CHANGES_RULE = (
     "do not make it."
 )
 
+# قانون مشترک بررسی وجود انسان توی عکس اول (عکس کاربر)، قبل از هر کار دیگه‌ای.
+PERSON_VALIDATION_RULE = (
+    "BEFORE doing anything else, carefully check the FIRST image (the person's photo). "
+    "This first image MUST be an actual photograph that clearly shows a real human "
+    "being's body and/or face, physically present in the frame. "
+    "If the first image does NOT meet that bar — for example if it is a photo of a "
+    "product, an object, packaging, a logo, an icon, a badge, a circular/framed graphic "
+    "design, an animal, a landscape, a piece of paper, a document, plain text, a "
+    "screenshot, a blank or solid-color image, a cartoon/illustration/3D render with no "
+    "real photographed person in it, or literally ANY image that does not show an actual "
+    "photographed human body — you MUST treat this as a validation failure. "
+    "In this failure case, you are STRICTLY FORBIDDEN from generating, inventing, "
+    "imagining, or drawing any person, body, or human figure to place the garment on. "
+    "Do not create a substitute model, mannequin-like figure, or any new human "
+    "whatsoever, even if it would make the output look complete. Do not attempt any "
+    "clothing swap, edit, or image generation of any kind. "
+    "Instead, your entire response must be ONLY plain text (absolutely no image output) "
+    f"that starts exactly with: {NO_PERSON_MARKER}\n"
+    "followed by a short one-sentence explanation of why the first image was rejected. "
+    "Do not guess or assume a person is present if you are not highly confident the first "
+    "image is a genuine photograph of a real human. When in doubt, reject — it is much "
+    "better to incorrectly reject a valid photo than to invent a fake person. Only "
+    "proceed with the clothing swap task below if you are highly confident the first "
+    "image is an actual photograph containing a real human body."
+)
+
 
 @router.post("/")
 async def try_on(
@@ -166,10 +271,13 @@ async def try_on(
     person_bytes = await person_image.read()
     person_data_url = upload_file_to_data_url(person_image, person_bytes)
 
+    ensure_person_image(person_data_url)
+
     content = [
         {
             "type": "text",
             "text": (
+                f"{PERSON_VALIDATION_RULE}\n\n"
                 "You are doing a virtual clothing try-on. The person in the first photo is "
                 "currently wearing a garment (e.g. top, jacket, or dress) that needs to be "
                 "swapped out. Replace that current garment with the new garment shown in the "
@@ -218,6 +326,8 @@ async def try_on(
     print("message.images:", images)
     print("=== END TRYON RAW ===")
 
+    check_no_person_response(message)
+
     if not images:
         raise HTTPException(
             status_code=502,
@@ -253,10 +363,13 @@ async def try_on_outfit(
     person_bytes = await person_image.read()
     person_data_url = upload_file_to_data_url(person_image, person_bytes)
 
+    ensure_person_image(person_data_url)
+
     content = [
         {
             "type": "text",
             "text": (
+                f"{PERSON_VALIDATION_RULE}\n\n"
                 "Take the person in the first photo, who is currently wearing their own top and "
                 "bottom. Replace their current outfit with BOTH new garments shown in the next "
                 "two photos AT THE SAME TIME, as a single coordinated outfit — one garment worn "
@@ -305,6 +418,8 @@ async def try_on_outfit(
     print("message.content:", message.content)
     print("message.images:", images)
     print("=== END TRYON OUTFIT RAW ===")
+
+    check_no_person_response(message)
 
     if not images:
         raise HTTPException(
