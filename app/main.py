@@ -31,9 +31,10 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # اجازه اتصال فرانت‌اند
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://app-nextjs-qot75.apps.de1.abrhapaas.com",
+    allow_origins = [
+    "http://localhost:3000",
+    "https://app-nextjs-j3p55.apps.teh11.abrhapaas.com",
+]
     ],
     allow_credentials=True,
     allow_methods=["*"],
