@@ -7,7 +7,7 @@ from openai import OpenAI
 from app.database.session import SessionLocal
 from app.repositories.product_repository import ProductRepository
 
-BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
+BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-obs8h.apps.teh11.abrhapaas.com")
 
 SYSTEM_PROMPT = """
 تو یک دستیار مشاور استایل و مد در یک فروشگاه آنلاین لباس هستی و به زبان فارسی صحبت می‌کنی.
@@ -159,7 +159,7 @@ class ChatService:
             )
 
             completion = self.client.chat.completions.create(
-                model="openai/gpt-4o-mini",
+                model="openai/gpt-4.1-mini",
                 temperature=0,
                 response_format={"type": "json_object"},
                 messages=messages,
