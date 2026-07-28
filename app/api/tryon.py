@@ -19,7 +19,7 @@ router = APIRouter(prefix="/tryon", tags=["Try-On"])
 repository = ProductRepository()
 
 UPLOAD_DIR = "static/uploads/tryon"
-BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-obs8h.apps.teh11.abrhapaas.com")
+BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-f3b4n.apps.teh11.abrhapaas.com")
 
 # حداکثر ابعاد و کیفیتی که عکس‌ها قبل از فرستادن به AI باهاش فشرده می‌شن.
 # فشرده کردن عکس حجم انتقالی رو کم می‌کنه و از قطع شدن اتصال (به‌خصوص وقتی

@@ -7,7 +7,7 @@ from openai import OpenAI
 from app.database.session import SessionLocal
 from app.repositories.product_repository import ProductRepository
 
-BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-obs8h.apps.teh11.abrhapaas.com")
+BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-f3b4n.apps.teh11.abrhapaas.com")
 
 SYSTEM_PROMPT = """
 تو یک دستیار مشاور استایل و مد در یک فروشگاه آنلاین لباس هستی و به زبان فارسی صحبت می‌کنی.

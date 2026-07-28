@@ -1,5 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://app-python-f3b4n.apps.teh11.abrhapaas.com";
-
+const API_BASE = "https://app-python-f3b4n.apps.teh11.abrhapaas.com";
 export type AuthApiResponse = {
   access_token: string;
   token_type: string;
