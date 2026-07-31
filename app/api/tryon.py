@@ -62,7 +62,7 @@ def call_model_with_retries(content, attempts: int = 3, initial_delay: float = 3
     for attempt in range(1, attempts + 1):
         try:
             return client.chat.completions.create(
-                model="google/gemini-3-pro-image-preview",
+                model="google/gemini-2.5-flash-image",
                 modalities=["image", "text"],
                 messages=[{"role": "user", "content": content}],
             )
@@ -178,7 +178,7 @@ def image_contains_person(person_data_url: str) -> bool:
 
     try:
         completion = client.chat.completions.create(
-            model="google/gemini-3-pro-image-preview",
+            model="google/gemini-2.5-flash-image",
             modalities=["text"],
             messages=[{"role": "user", "content": question}],
         )
