@@ -1,3 +1,4 @@
+import hmac
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -32,4 +33,16 @@ def get_current_user_id(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="توکن نامعتبر است.",
+        )
+
+from fastapi import Header
+from app.core.config import settings
+
+
+def require_admin(x_admin_key: str | None = Header(default=None, alias="X-Admin-Key")) -> None:
+    """محافظ مسیرهای مدیریتی با کلید جدا از JWT کاربران."""
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, settings.ADMIN_API_KEY):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="دسترسی مدیریتی معتبر نیست.",
         )

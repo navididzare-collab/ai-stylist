@@ -874,6 +874,23 @@
 <script>
 const API = "";
 
+function getAdminKey() {
+  let key = sessionStorage.getItem("jest_admin_key");
+  if (!key) {
+    key = window.prompt("کلید مدیریت (ADMIN_API_KEY) را وارد کنید:") || "";
+    if (key) sessionStorage.setItem("jest_admin_key", key);
+  }
+  return key;
+}
+
+function adminFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  const key = getAdminKey();
+  if (key) headers.set("X-Admin-Key", key);
+  return fetch(url, { ...options, headers });
+}
+
+
 // ---------- TABS ----------
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -945,13 +962,13 @@ async function saveProduct() {
   try {
     let res;
     if (editId) {
-      res = await fetch(`${API}/products/${editId}`, {
+      res = await adminFetch(`${API}/products/${editId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
     } else {
-      res = await fetch(`${API}/products/`, {
+      res = await adminFetch(`${API}/products/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -1010,7 +1027,7 @@ async function toggleFeatured(id, currentValue) {
   };
 
   try {
-    const res = await fetch(`${API}/products/${id}`, {
+    const res = await adminFetch(`${API}/products/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updatedData),
@@ -1025,7 +1042,7 @@ async function toggleFeatured(id, currentValue) {
 async function deleteProduct(id) {
   if (!confirm("مطمئنی می‌خوای این محصول حذف بشه؟")) return;
   try {
-    const res = await fetch(`${API}/products/${id}`, { method: "DELETE" });
+    const res = await adminFetch(`${API}/products/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error("خطا در حذف");
     loadProducts();
   } catch (err) {
@@ -1149,7 +1166,7 @@ function renderProductsTable() {
 
 async function loadProducts() {
   try {
-    const res = await fetch(`${API}/products/`);
+    const res = await adminFetch(`${API}/products/`);
     const products = await res.json();
     cachedProducts = products;
 
@@ -1195,7 +1212,7 @@ async function loadProductImages() {
   if (!productId) return;
 
   try {
-    const res = await fetch(`${API}/product-images/${productId}`);
+    const res = await adminFetch(`${API}/product-images/${productId}`);
     const images = await res.json();
 
     if (!images.length) {
@@ -1238,7 +1255,7 @@ async function uploadImages() {
   }
 
   try {
-    const res = await fetch(`${API}/product-images/${productId}`, {
+    const res = await adminFetch(`${API}/product-images/${productId}`, {
       method: "POST",
       body: formData,
     });
@@ -1255,7 +1272,7 @@ async function uploadImages() {
 async function deleteImage(imageId) {
   if (!confirm("این عکس حذف بشه؟")) return;
   try {
-    const res = await fetch(`${API}/product-images/${imageId}`, { method: "DELETE" });
+    const res = await adminFetch(`${API}/product-images/${imageId}`, { method: "DELETE" });
     if (!res.ok) throw new Error("خطا در حذف عکس");
     loadProductImages();
   } catch (err) {
@@ -1376,10 +1393,10 @@ async function sendChatMessage() {
   appendTypingIndicator();
 
   try {
-    const res = await fetch(`${API}/chat/`, {
+    const res = await adminFetch(`${API}/chat/admin-test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer_id: customerId, message: text }),
+      body: JSON.stringify({ message: text, history: [] }),
     });
 
     removeTypingIndicator();
@@ -1704,7 +1721,7 @@ function renderCustomersTable(list) {
 async function loadCustomers() {
   const empty = document.getElementById("customers-empty");
   try {
-    const res = await fetch(`${API}/auth/users`);
+    const res = await adminFetch(`${API}/auth/users`);
     const customers = await res.json();
     cachedCustomers = customers;
     applyCustomerFilter();

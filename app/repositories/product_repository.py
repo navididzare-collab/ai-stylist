@@ -93,20 +93,35 @@ class ProductRepository:
         db: Session,
         category: str | None = None,
         occasion: str | None = None,
+        season: str | None = None,
+        gender: str | None = None,
+        query: str | None = None,
     ):
-        """
-        فیلتر ساده‌ی محصولات بر اساس دسته‌بندی و/یا مناسبت.
-        برای استفاده در صفحه‌ی محصولات فرانت (کلیک روی دایره‌های دسته‌بندی).
-        """
         q = db.query(Product).filter(Product.is_active == True)
 
         if category:
             q = q.filter(Product.category.ilike(f"%{category}%"))
-
         if occasion:
             q = q.filter(Product.occasion.ilike(f"%{occasion}%"))
+        if season:
+            q = q.filter(Product.season.ilike(f"%{season}%"))
+        if gender:
+            q = q.filter(Product.gender.ilike(f"%{gender}%"))
+        if query:
+            safe_query = query.strip()[:100]
+            q = q.filter(
+                or_(
+                    Product.name.ilike(f"%{safe_query}%"),
+                    Product.brand.ilike(f"%{safe_query}%"),
+                    Product.category.ilike(f"%{safe_query}%"),
+                    Product.color.ilike(f"%{safe_query}%"),
+                    Product.material.ilike(f"%{safe_query}%"),
+                    Product.occasion.ilike(f"%{safe_query}%"),
+                    Product.season.ilike(f"%{safe_query}%"),
+                )
+            )
 
-        return q.all()
+        return q.order_by(Product.is_featured.desc(), Product.id.desc()).all()
 
     def search_for_ai(
         self,

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_admin
 from app.database.session import SessionLocal
 from app.repositories.product_repository import ProductRepository
 from app.schemas.product_search import ProductForAI
@@ -29,6 +30,7 @@ def search_for_ai(
     min_price: float | None = None,
     max_price: float | None = None,
     limit: int = 8,
+    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """

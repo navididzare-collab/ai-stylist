@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class UserRegister(BaseModel):
     full_name: str = Field(min_length=2)
     phone: str = Field(min_length=10, max_length=15)
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class UserLogin(BaseModel):
@@ -46,5 +46,5 @@ class UserUpdateName(BaseModel):
 
 
 class UserUpdatePassword(BaseModel):
-    current_password: str = Field(min_length=6)
-    new_password: str = Field(min_length=6)
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)

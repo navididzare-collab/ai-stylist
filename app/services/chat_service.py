@@ -1,13 +1,13 @@
 import json
-import os
-
 import httpx
 from openai import OpenAI
 
+from app.core.config import settings
 from app.database.session import SessionLocal
 from app.repositories.product_repository import ProductRepository
+from app.services.outfit_rules import validate_outfit
 
-BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-xvxv0.apps.frk1.abrhapaas.com")
+BASE_URL = settings.BACKEND_BASE_URL
 
 SYSTEM_PROMPT = """
 تو یک دستیار مشاور استایل و مد در یک فروشگاه آنلاین لباس هستی و به زبان فارسی صحبت می‌کنی.
@@ -112,8 +112,8 @@ class ChatService:
 
     def __init__(self):
         self.client = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url="https://openrouter.ai/api/v1",
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENROUTER_BASE_URL,
             http_client=httpx.Client(timeout=httpx.Timeout(60.0, connect=20.0)),
             timeout=60.0,
             max_retries=2,
@@ -173,17 +173,24 @@ class ChatService:
             )
 
             completion = self.client.chat.completions.create(
-                model="openai/gpt-4.1-mini",
+                model=settings.CHAT_MODEL,
                 temperature=0,
                 response_format={"type": "json_object"},
                 messages=messages,
             )
 
-            raw = completion.choices[0].message.content
+            raw = completion.choices[0].message.content or "{}"
             parsed = json.loads(raw)
 
-            reply = parsed.get("reply", "")
-            product_ids = parsed.get("product_ids", [])
+            reply = str(parsed.get("reply", "")).strip()[:2000]
+            raw_product_ids = parsed.get("product_ids", [])
+            product_ids = []
+            if isinstance(raw_product_ids, list):
+                for value in raw_product_ids[:3]:
+                    try:
+                        product_ids.append(int(value))
+                    except (TypeError, ValueError):
+                        continue
 
             is_outfit_matching_message = (
                 "[مشخصات دقیق محصول انتخاب‌شده]" in message
@@ -212,7 +219,8 @@ class ChatService:
                     main_image = next(
                         (img for img in p.images if img.is_main), p.images[0]
                     )
-                    image_url = f"{BASE_URL}{main_image.image_url}"
+                    path = main_image.image_url or ""
+                    image_url = path if path.startswith(("http://", "https://")) else f"{BASE_URL}/{path.lstrip('/')}"
 
                 result_products.append(
                     {
@@ -231,6 +239,10 @@ class ChatService:
             # "ست کامل" بذاریم.
             if len(result_products) < 2:
                 is_outfit_set = False
+            elif is_outfit_set:
+                product_objects = [products_by_id[item["id"]] for item in result_products]
+                valid, _, _ = validate_outfit(product_objects)
+                is_outfit_set = valid
 
             return {
                 "message": reply,

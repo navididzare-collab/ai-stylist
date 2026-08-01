@@ -1,25 +1,34 @@
 import base64
+import hashlib
+import hmac
 import io
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from fastapi.responses import FileResponse
 from PIL import Image
 import httpx
 from openai import OpenAI, APIConnectionError, APITimeoutError
 
+from app.api.deps import get_current_user_id
+from app.core.config import settings
+from app.core.rate_limit import rate_limiter
+from app.core.uploads import read_validated_image
 from app.database.session import get_db
 from app.repositories.product_repository import ProductRepository
+from app.services.outfit_rules import build_layer_instruction, validate_outfit
 
 router = APIRouter(prefix="/tryon", tags=["Try-On"])
 
 repository = ProductRepository()
 
-UPLOAD_DIR = "static/uploads/tryon"
-BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-xvxv0.apps.frk1.abrhapaas.com")
+PRIVATE_UPLOAD_DIR = settings.TRYON_PRIVATE_DIR
+BASE_URL = settings.BACKEND_BASE_URL
 
 # حداکثر ابعاد و کیفیتی که عکس‌ها قبل از فرستادن به AI باهاش فشرده می‌شن.
 # فشرده کردن عکس حجم انتقالی رو کم می‌کنه و از قطع شدن اتصال (به‌خصوص وقتی
@@ -49,8 +58,8 @@ if PROXY_URL:
     _http_client_kwargs["proxy"] = PROXY_URL
 
 client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
+    api_key=settings.OPENAI_API_KEY,
+    base_url=settings.OPENROUTER_BASE_URL,
     http_client=httpx.Client(**_http_client_kwargs),
     timeout=180.0,
     max_retries=2,
@@ -69,13 +78,12 @@ def call_model_with_retries(content, attempts: int = 3, initial_delay: float = 3
     for attempt in range(1, attempts + 1):
         try:
             return client.chat.completions.create(
-                model="google/gemini-2.5-flash-image",
+                model=settings.TRYON_MODEL,
                 modalities=["image", "text"],
                 messages=[{"role": "user", "content": content}],
             )
         except (APIConnectionError, APITimeoutError) as e:
             last_error = e
-            print(f"=== TRYON RETRY {attempt}/{attempts} FAILED: {repr(e)} ===")
             if attempt < attempts:
                 time.sleep(delay)
                 delay *= 2
@@ -101,10 +109,8 @@ def compress_image_bytes(content: bytes) -> bytes:
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
         return buffer.getvalue()
-    except Exception as e:
-        # اگه به هر دلیلی فشرده‌سازی شکست خورد، عکس اصلی رو برگردون تا
-        # لااقل کل درخواست fail نشه.
-        print("=== IMAGE COMPRESSION FAILED, USING ORIGINAL ===", repr(e))
+    except Exception:
+        # در صورت خطای غیرمنتظره، فایل اصلیِ قبلاً اعتبارسنجی‌شده استفاده می‌شود.
         return content
 
 
@@ -132,28 +138,75 @@ def get_garment_data_url(db: Session, product_id: int) -> str:
         raise HTTPException(status_code=400, detail=f"محصول با id={product_id} عکس ندارد.")
 
     main_image = next((img for img in product.images if img.is_main), product.images[0])
-    garment_disk_path = main_image.image_url.lstrip("/")
-
-    if not os.path.exists(garment_disk_path):
+    garment_disk_path = Path(main_image.image_url.lstrip("/")).resolve()
+    static_root = Path("static").resolve()
+    if static_root not in garment_disk_path.parents:
+        raise HTTPException(status_code=400, detail="مسیر عکس محصول معتبر نیست.")
+    if not garment_disk_path.is_file():
         raise HTTPException(status_code=404, detail=f"فایل عکس محصول با id={product_id} پیدا نشد.")
 
-    return image_file_to_data_url(garment_disk_path)
+    return image_file_to_data_url(str(garment_disk_path))
 
 
-def save_result_image(result_b64: str) -> str:
-    if result_b64.startswith("data:"):
-        header, b64_data = result_b64.split(",", 1)
-    else:
-        b64_data = result_b64
+def _sign_result(filename: str, user_id: int, expires: int) -> str:
+    payload = f"{filename}:{user_id}:{expires}".encode("utf-8")
+    return hmac.new(
+        settings.JWT_SECRET.encode("utf-8"), payload, hashlib.sha256
+    ).hexdigest()
 
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+def _cleanup_expired_results() -> None:
+    PRIVATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    cutoff = time.time() - max(settings.TRYON_RESULT_TTL_SECONDS * 2, 7200)
+    for path in PRIVATE_UPLOAD_DIR.glob("*.png"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def save_result_image(result_b64: str, user_id: int) -> str:
+    b64_data = result_b64.split(",", 1)[1] if result_b64.startswith("data:") else result_b64
+    try:
+        image_bytes = base64.b64decode(b64_data, validate=True)
+        if len(image_bytes) > 20 * 1024 * 1024:
+            raise ValueError("result too large")
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.verify()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="تصویر تولیدشده معتبر نبود.") from exc
+
+    _cleanup_expired_results()
     filename = f"{uuid.uuid4()}.png"
-    dest_path = os.path.join(UPLOAD_DIR, filename)
+    dest_path = PRIVATE_UPLOAD_DIR / filename
+    dest_path.write_bytes(image_bytes)
 
-    with open(dest_path, "wb") as f:
-        f.write(base64.b64decode(b64_data))
+    expires = int(time.time()) + settings.TRYON_RESULT_TTL_SECONDS
+    signature = _sign_result(filename, user_id, expires)
+    return (
+        f"{BASE_URL}/tryon/result/{filename}?uid={user_id}&expires={expires}"
+        f"&signature={signature}"
+    )
 
-    return f"{BASE_URL}/static/uploads/tryon/{filename}"
+
+@router.get("/result/{filename}", include_in_schema=False)
+def get_tryon_result(
+    filename: str,
+    uid: int = Query(...),
+    expires: int = Query(...),
+    signature: str = Query(...),
+):
+    if expires < int(time.time()):
+        raise HTTPException(status_code=410, detail="لینک تصویر منقضی شده است.")
+    if not hmac.compare_digest(signature, _sign_result(filename, uid, expires)):
+        raise HTTPException(status_code=403, detail="لینک تصویر معتبر نیست.")
+    if Path(filename).name != filename or not filename.endswith(".png"):
+        raise HTTPException(status_code=400, detail="نام فایل نامعتبر است.")
+    path = PRIVATE_UPLOAD_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="تصویر پیدا نشد.")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
 
 
 # پیام‌های نهایی که کاربر در هر حالت می‌بینه. این‌ها هم توسط لایه‌ی اول
@@ -234,18 +287,15 @@ def classify_person_image(person_data_url: str) -> str:
 
     try:
         completion = client.chat.completions.create(
-            model="google/gemini-2.5-flash-image",
+            model=settings.TRYON_MODEL,
             modalities=["text"],
             messages=[{"role": "user", "content": question}],
         )
-    except Exception as e:
-        print("=== PERSON CHECK EXCEPTION, FAILING OPEN ===", repr(e))
-        # اگه خود این چک به هر دلیلی (مثلاً مشکل شبکه) شکست خورد، اجازه
-        # می‌دیم فرآیند اصلی ادامه پیدا کنه به‌جای اینکه کاربر بی‌دلیل بلاک بشه.
+    except Exception:
+        # کار اصلی خودش یک لایه بررسی پشتیبان دارد؛ در خطای پیش‌بررسی ادامه می‌دهیم.
         return PERSON_CHECK_OK
 
     answer = (completion.choices[0].message.content or "").strip().upper()
-    print("=== PERSON CHECK ANSWER ===", answer)
 
     if "NOT_PERSON" in answer:
         return PERSON_CHECK_NOT_PERSON
@@ -375,11 +425,15 @@ PERSON_VALIDATION_RULE = (
 async def try_on(
     product_id: int = Form(...),
     person_image: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    rate_limiter.check(
+        f"tryon:{current_user_id}", limit=settings.TRYON_RATE_LIMIT_PER_HOUR
+    )
     garment_data_url = get_garment_data_url(db, product_id)
 
-    person_bytes = await person_image.read()
+    person_bytes = await read_validated_image(person_image)
     person_data_url = upload_file_to_data_url(person_image, person_bytes)
 
     ensure_person_image(person_data_url)
@@ -423,20 +477,11 @@ async def try_on(
 
     try:
         completion = call_model_with_retries(content)
-    except Exception as e:
-        print("=== TRYON EXCEPTION ===")
-        print(repr(e))
-        print("=== END EXCEPTION ===")
-        raise HTTPException(status_code=502, detail=f"خطا در تماس با سرویس تولید عکس: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="سرویس تولید تصویر موقتاً در دسترس نیست.") from exc
 
     message = completion.choices[0].message
     images = getattr(message, "images", None)
-
-    print("=== TRYON RAW COMPLETION ===")
-    print("finish_reason:", completion.choices[0].finish_reason)
-    print("message.content:", message.content)
-    print("message.images:", images)
-    print("=== END TRYON RAW ===")
 
     check_no_person_response(message)
 
@@ -447,13 +492,14 @@ async def try_on(
         )
 
     result_b64 = images[0]["image_url"]["url"]
-    return {"result_image_url": save_result_image(result_b64)}
+    return {"result_image_url": save_result_image(result_b64, current_user_id)}
 
 
 @router.post("/outfit")
 async def try_on_outfit(
     product_ids: List[int] = Form(...),
     person_image: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     """
@@ -461,18 +507,21 @@ async def try_on_outfit(
     پایین‌تنه که با هم ست شدن) رو هم‌زمان روی همون یک عکس کاربر می‌پوشونه،
     نه اینکه دوبار جدا-جدا صداش کنیم.
     """
-    if len(product_ids) < 2:
-        raise HTTPException(
-            status_code=400,
-            detail="برای امتحان ست کامل باید دقیقاً دو محصول ارسال شود.",
-        )
+    rate_limiter.check(
+        f"tryon:{current_user_id}", limit=settings.TRYON_RATE_LIMIT_PER_HOUR
+    )
+    products = [repository.get_by_id(db, pid) for pid in product_ids]
+    if any(product is None for product in products):
+        raise HTTPException(status_code=404, detail="یکی از محصولات انتخابی پیدا نشد.")
 
-    # اگه بیشتر از دو تا اومد، فقط دو تای اول رو در نظر می‌گیریم
-    product_ids = product_ids[:2]
+    valid, reason, slots = validate_outfit(products)
+    if not valid:
+        raise HTTPException(status_code=400, detail=reason)
 
     garment_data_urls = [get_garment_data_url(db, pid) for pid in product_ids]
+    layer_instruction = build_layer_instruction(products, slots)
 
-    person_bytes = await person_image.read()
+    person_bytes = await read_validated_image(person_image)
     person_data_url = upload_file_to_data_url(person_image, person_bytes)
 
     ensure_person_image(person_data_url)
@@ -482,11 +531,12 @@ async def try_on_outfit(
             "type": "text",
             "text": (
                 f"{PERSON_VALIDATION_RULE}\n\n"
-                "Take the person in the first photo, who is currently wearing their own top and "
-                "bottom. Replace their current outfit with BOTH new garments shown in the next "
-                "two photos AT THE SAME TIME, as a single coordinated outfit — one garment worn "
-                "as the top/outer layer and the other as the bottom (or however the two garments "
-                "are naturally worn together). The new garments should fully take the place of "
+                f"Take the person in the first photo and dress them with all {len(products)} "
+                "selected garments shown in the following reference photos at the same time, as "
+                "one realistic coordinated outfit. Follow this exact layering plan: "
+                f"{layer_instruction}. When an inner top and a buttoned shirt are both selected, "
+                "the inner top must be worn underneath and the buttoned shirt must be visibly open. "
+                "The new garments should fully take the place of "
                 "the original outfit — no part of the original clothing (collar, sleeve, or hem) "
                 "should remain visible underneath or peeking out. Fit both garments naturally to "
                 "the person's body shape and pose, matching the lighting of the original photo. "
@@ -494,7 +544,7 @@ async def try_on_outfit(
                 "this must be a full replacement, not a cover-up. Do not invent or add any extra "
                 "clothing layer underneath the new garments — no black undershirt, black "
                 "camisole, black leggings, black sleeves, or any other filler garment that is not "
-                "part of the two new garments themselves. Fit and drape each garment so it "
+                "part of the selected garments themselves. Fit and drape each garment so it "
                 "naturally covers the person's body the way it would when actually worn — even if "
                 "a reference product photo shows a garment (such as a jacket or coat) hanging open "
                 "or loose with nothing underneath, adapt it on the person so it closes over and "
@@ -504,7 +554,7 @@ async def try_on_outfit(
                 "person's face, facial expression, hairstyle, body shape, skin tone, pose, camera "
                 "angle, framing, and background exactly as close to the original photo as "
                 "possible. Do not beautify, retouch, reshape, or alter the person in any way. "
-                "Return a single photorealistic result showing the person wearing both new "
+                "Return a single photorealistic result showing the person wearing all selected "
                 "garments together.\n\n"
                 f"{GARMENT_FIDELITY_RULE}\n\n"
                 f"{STRICT_NO_EXTRA_CHANGES_RULE}"
@@ -517,20 +567,11 @@ async def try_on_outfit(
 
     try:
         completion = call_model_with_retries(content)
-    except Exception as e:
-        print("=== TRYON OUTFIT EXCEPTION ===")
-        print(repr(e))
-        print("=== END EXCEPTION ===")
-        raise HTTPException(status_code=502, detail=f"خطا در تماس با سرویس تولید عکس: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="سرویس تولید تصویر موقتاً در دسترس نیست.") from exc
 
     message = completion.choices[0].message
     images = getattr(message, "images", None)
-
-    print("=== TRYON OUTFIT RAW COMPLETION ===")
-    print("finish_reason:", completion.choices[0].finish_reason)
-    print("message.content:", message.content)
-    print("message.images:", images)
-    print("=== END TRYON OUTFIT RAW ===")
 
     check_no_person_response(message)
 
@@ -541,4 +582,4 @@ async def try_on_outfit(
         )
 
     result_b64 = images[0]["image_url"]["url"]
-    return {"result_image_url": save_result_image(result_b64)}
+    return {"result_image_url": save_result_image(result_b64, current_user_id)}

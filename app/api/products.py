@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_admin
 from app.database.session import get_db
 from app.repositories.product_repository import ProductRepository
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
@@ -13,6 +14,7 @@ repository = ProductRepository()
 @router.post("/")
 def create_product(
     product: ProductCreate,
+    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     db_product = repository.create(db, product)
@@ -26,6 +28,7 @@ def create_product(
 @router.post("/bulk")
 def create_products_bulk(
     products: list[ProductCreate],
+    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -48,6 +51,9 @@ def create_products_bulk(
 def get_products(
     category: str | None = None,
     occasion: str | None = None,
+    season: str | None = None,
+    gender: str | None = None,
+    query: str | None = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -56,10 +62,14 @@ def get_products(
     /products?category=تیشرت یا /products?occasion=اسپرت)،
     فقط محصولات همون دسته/مناسبت فیلتر می‌شن.
     """
-    if category or occasion:
-        return repository.filter_products(db, category=category, occasion=occasion)
-
-    return repository.get_all(db)
+    return repository.filter_products(
+        db,
+        category=category,
+        occasion=occasion,
+        season=season,
+        gender=gender,
+        query=query,
+    )
 
 
 @router.get("/search", response_model=list[ProductResponse])
@@ -87,6 +97,7 @@ def get_product(
 def update_product(
     product_id: int,
     product: ProductUpdate,
+    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     updated_product = repository.update(db, product_id, product)
@@ -100,6 +111,7 @@ def update_product(
 @router.delete("/{product_id}")
 def delete_product(
     product_id: int,
+    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     deleted = repository.delete(db, product_id)

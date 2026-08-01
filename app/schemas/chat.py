@@ -1,18 +1,18 @@
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class ChatHistoryItem(BaseModel):
-    role: str  # "user" یا "assistant"
-    content: str
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=6000)
 
 
 class ChatRequest(BaseModel):
-    customer_id: int
-    message: str
-    # تاریخچه‌ی چند پیام قبلی مکالمه؛ برای اینکه AI به پیام‌های قبلی
-    # (مثل «به‌جای اون شلوار یکی دیگه بگو») دسترسی داشته باشه.
-    history: Optional[list[ChatHistoryItem]] = None
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ChatHistoryItem] | None = Field(default=None, max_length=20)
+    # فقط برای سازگاری با نسخه قدیمی فرانت؛ سرور به این مقدار اعتماد نمی‌کند.
+    customer_id: int | None = None
 
 
 class ChatResponse(BaseModel):
