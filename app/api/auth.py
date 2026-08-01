@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_id, require_admin
-from app.core.config import settings
-from app.core.rate_limit import rate_limiter
+from app.api.deps import get_current_user_id
 from app.core.security import create_access_token
 from app.database.session import get_db
 from app.repositories.user_repository import UserRepository
@@ -22,22 +20,13 @@ repository = UserRepository()
 
 
 @router.get("/users", response_model=list[UserListItem])
-def list_users(
-    _: None = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
+def list_users(db: Session = Depends(get_db)):
     """لیست همه‌ی کاربران ثبت‌نام‌شده (برای پنل ادمین - تب مشتریان)"""
     return repository.get_all(db)
 
 
 @router.post("/register", response_model=TokenResponse)
-def register(payload: UserRegister, request: Request, db: Session = Depends(get_db)):
-    client_ip = request.client.host if request.client else "unknown"
-    rate_limiter.check(
-        f"auth:register:{client_ip}",
-        limit=settings.AUTH_RATE_LIMIT_PER_15_MINUTES,
-        window_seconds=900,
-    )
+def register(payload: UserRegister, db: Session = Depends(get_db)):
     existing = repository.get_by_phone(db, payload.phone)
     if existing is not None:
         raise HTTPException(status_code=400, detail="این شماره موبایل قبلاً ثبت شده است.")
@@ -48,13 +37,7 @@ def register(payload: UserRegister, request: Request, db: Session = Depends(get_
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: UserLogin, request: Request, db: Session = Depends(get_db)):
-    client_ip = request.client.host if request.client else "unknown"
-    rate_limiter.check(
-        f"auth:login:{client_ip}:{payload.phone}",
-        limit=settings.AUTH_RATE_LIMIT_PER_15_MINUTES,
-        window_seconds=900,
-    )
+def login(payload: UserLogin, db: Session = Depends(get_db)):
     user = repository.authenticate(db, payload.phone, payload.password)
     if user is None:
         raise HTTPException(status_code=401, detail="شماره موبایل یا رمز عبور اشتباه است.")

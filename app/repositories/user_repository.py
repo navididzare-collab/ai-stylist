@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.core.security import hash_password, password_hash_needs_upgrade, verify_password
+from app.core.security import hash_password, verify_password
 from app.models.user import User
 
 
@@ -32,10 +32,6 @@ class UserRepository:
             return None
         if not verify_password(password, user.hashed_password):
             return None
-        if password_hash_needs_upgrade(user.hashed_password):
-            user.hashed_password = hash_password(password)
-            db.commit()
-            db.refresh(user)
         return user
 
     # --- جدید ---

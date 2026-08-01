@@ -7,48 +7,40 @@ import jwt
 
 from app.core.config import settings
 
-PBKDF2_ITERATIONS = 600_000
-
 
 def hash_password(password: str) -> str:
-    """هش نسخه‌دار PBKDF2-SHA256 با salt تصادفی."""
+    """
+    رمز عبور رو با salt تصادفی و pbkdf2_hmac هش می‌کنه.
+    خروجی به شکل "salt_hex$hash_hex" ذخیره می‌شه.
+    """
     salt = os.urandom(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS
-    )
-    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+    pwd_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return f"{salt.hex()}${pwd_hash.hex()}"
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    """فرمت جدید را بررسی می‌کند و با فرمت قدیمی پروژه نیز سازگار است."""
+    """
+    رمز واردشده رو با هش ذخیره‌شده مقایسه می‌کنه.
+    """
     try:
-        if stored_hash.startswith("pbkdf2_sha256$"):
-            _, iterations_raw, salt_hex, hash_hex = stored_hash.split("$", 3)
-            iterations = int(iterations_raw)
-        else:
-            salt_hex, hash_hex = stored_hash.split("$", 1)
-            iterations = 100_000
-        salt = bytes.fromhex(salt_hex)
-        expected_hash = bytes.fromhex(hash_hex)
-    except (ValueError, TypeError):
+        salt_hex, hash_hex = stored_hash.split("$")
+    except ValueError:
         return False
 
-    calculated = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt, iterations
-    )
-    return hmac.compare_digest(calculated, expected_hash)
+    salt = bytes.fromhex(salt_hex)
+    expected_hash = bytes.fromhex(hash_hex)
+    pwd_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+
+    return hmac.compare_digest(pwd_hash, expected_hash)
 
 
-def password_hash_needs_upgrade(stored_hash: str) -> bool:
-    if not stored_hash.startswith("pbkdf2_sha256$"):
-        return True
-    try:
-        return int(stored_hash.split("$", 3)[1]) < PBKDF2_ITERATIONS
-    except (ValueError, IndexError):
-        return True
-
+# ---------------------------------------------------------------------------
+# JWT: از این به بعد سرور به هیچ user_id ای که از کلاینت (URL/body) میاد
+# اعتماد نمی‌کنه. شناسه‌ی کاربر همیشه از داخل توکنِ verify‌شده استخراج میشه.
+# ---------------------------------------------------------------------------
 
 def create_access_token(user_id: int) -> str:
+    """یک JWT امضاشده برای کاربر می‌سازه که شناسه‌ی کاربر داخلش قرار داره."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
@@ -59,5 +51,9 @@ def create_access_token(user_id: int) -> str:
 
 
 def decode_access_token(token: str) -> int:
+    """
+    توکن رو verify می‌کنه و user_id رو برمی‌گردونه.
+    اگه توکن نامعتبر یا منقضی باشه، jwt.PyJWTError پرتاب میشه.
+    """
     payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     return int(payload["sub"])

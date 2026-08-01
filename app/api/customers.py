@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin
 from app.database.session import get_db
 from app.repositories.customer_repository import CustomerRepository
 from app.schemas.customer import CustomerCreate, CustomerUpdate
@@ -14,7 +13,6 @@ repository = CustomerRepository()
 @router.post("/")
 def create_customer(
     customer: CustomerCreate,
-    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     db_customer = repository.create(db, customer)
@@ -27,7 +25,6 @@ def create_customer(
 
 @router.get("/")
 def get_customers(
-    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     return repository.get_all(db)
@@ -36,7 +33,6 @@ def get_customers(
 @router.get("/{customer_id}")
 def get_customer(
     customer_id: int,
-    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     customer = repository.get_by_id(db, customer_id)
@@ -53,7 +49,6 @@ def get_customer(
 def update_customer(
     customer_id: int,
     customer: CustomerUpdate,
-    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     updated_customer = repository.update(db, customer_id, customer)
@@ -71,7 +66,6 @@ def update_customer(
 @router.delete("/{customer_id}")
 def delete_customer(
     customer_id: int,
-    _: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     deleted = repository.delete(db, customer_id)
