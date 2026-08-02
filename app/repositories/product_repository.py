@@ -93,10 +93,12 @@ class ProductRepository:
         db: Session,
         category: str | None = None,
         occasion: str | None = None,
+        season: str | None = None,
     ):
         """
-        فیلتر ساده‌ی محصولات بر اساس دسته‌بندی و/یا مناسبت.
-        برای استفاده در صفحه‌ی محصولات فرانت (کلیک روی دایره‌های دسته‌بندی).
+        فیلتر ساده‌ی محصولات بر اساس دسته‌بندی و/یا مناسبت و/یا فصل.
+        برای استفاده در صفحه‌ی محصولات فرانت (کلیک روی دایره‌های دسته‌بندی
+        یا کارت‌های دسته‌بندی صفحه‌ی خانه).
         """
         q = db.query(Product).filter(Product.is_active == True)
 
@@ -105,6 +107,9 @@ class ProductRepository:
 
         if occasion:
             q = q.filter(Product.occasion.ilike(f"%{occasion}%"))
+
+        if season:
+            q = q.filter(Product.season.ilike(f"%{season}%"))
 
         return q.all()
 

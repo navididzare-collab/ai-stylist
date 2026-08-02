@@ -48,16 +48,19 @@ def create_products_bulk(
 def get_products(
     category: str | None = None,
     occasion: str | None = None,
+    season: str | None = None,
     db: Session = Depends(get_db),
 ):
     """
     لیست محصولات را برمی‌گرداند.
-    اگه category یا occasion در query string ارسال بشه (مثلاً
-    /products?category=تیشرت یا /products?occasion=اسپرت)،
-    فقط محصولات همون دسته/مناسبت فیلتر می‌شن.
+    اگه category یا occasion یا season در query string ارسال بشه (مثلاً
+    /products?category=تیشرت یا /products?occasion=اسپرت یا /products?season=تابستان)،
+    فقط محصولات همون دسته/مناسبت/فصل فیلتر می‌شن.
     """
-    if category or occasion:
-        return repository.filter_products(db, category=category, occasion=occasion)
+    if category or occasion or season:
+        return repository.filter_products(
+            db, category=category, occasion=occasion, season=season
+        )
 
     return repository.get_all(db)
 
