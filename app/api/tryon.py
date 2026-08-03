@@ -1,18 +1,19 @@
 import base64
 import io
 import os
+import threading
 import time
 import uuid
-from typing import List
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from PIL import Image
 import httpx
 from openai import OpenAI, APIConnectionError, APITimeoutError
 
-from app.database.session import get_db
+from app.database.session import SessionLocal, get_db
 from app.repositories.product_repository import ProductRepository
 
 router = APIRouter(prefix="/tryon", tags=["Try-On"])
@@ -21,6 +22,53 @@ repository = ProductRepository()
 
 UPLOAD_DIR = "static/uploads/tryon"
 BASE_URL = os.getenv("BACKEND_BASE_URL", "https://app-python-xvxv0.apps.frk1.abrhapaas.com")
+
+# ==========================================================================
+# جاب‌های پس‌زمینه برای «/tryon/outfit»
+# ==========================================================================
+# چون اعمال ۲ یا ۳ لباس پشت‌سرهم می‌تونه چند دقیقه طول بکشه، و پلتفرم میزبانی
+# یه سقف زمانی (تایم‌اوت گیت‌وی) برای هر درخواست HTTP داره که از اون طولانی‌تر
+# باشه کانکشن رو قطع می‌کنه، دیگه منتظر نمی‌مونیم تا کل پردازش تموم بشه و
+# جواب بدیم. به‌جاش:
+#   ۱) درخواست اول («/tryon/outfit») فوری یه job_id برمی‌گردونه و پردازش رو
+#      در پس‌زمینه شروع می‌کنه.
+#   ۲) فرانت هر چند ثانیه یه‌بار وضعیت اون job رو از
+#      «/tryon/outfit/status/{job_id}» می‌پرسه تا تموم بشه.
+# این وضعیت‌ها فقط توی حافظه (RAM) نگه‌داری می‌شن؛ چون سرور با یک پروسه‌ی
+# uvicorn اجرا می‌شه، این کار مشکلی نداره. اگه بعداً به چند worker/پروسه
+# سوییچ کردید، این بخش باید به یه storage مشترک (مثل Redis) منتقل بشه.
+_outfit_jobs: Dict[str, dict] = {}
+_outfit_jobs_lock = threading.Lock()
+
+# جاب‌های خیلی قدیمی (بیشتر از این مدت از اتمامشون گذشته) پاک می‌شن تا حافظه
+# پر نشه.
+_JOB_TTL_SECONDS = 30 * 60
+
+
+def _set_job(job_id: str, **fields) -> None:
+    with _outfit_jobs_lock:
+        job = _outfit_jobs.get(job_id)
+        if job is not None:
+            job.update(fields)
+
+
+def _append_job_log(job_id: str, message: str) -> None:
+    with _outfit_jobs_lock:
+        job = _outfit_jobs.get(job_id)
+        if job is not None:
+            job.setdefault("logs", []).append(message)
+
+
+def _cleanup_old_jobs() -> None:
+    now = time.time()
+    with _outfit_jobs_lock:
+        expired = [
+            jid
+            for jid, job in _outfit_jobs.items()
+            if job.get("finished_at") and now - job["finished_at"] > _JOB_TTL_SECONDS
+        ]
+        for jid in expired:
+            del _outfit_jobs[jid]
 
 # حداکثر ابعاد و کیفیتی که عکس‌ها قبل از فرستادن به AI باهاش فشرده می‌شن.
 # فشرده کردن عکس حجم انتقالی رو کم می‌کنه و از قطع شدن اتصال (به‌خصوص وقتی
@@ -139,6 +187,32 @@ def get_garment_data_url(db: Session, product_id: int) -> str:
         raise HTTPException(status_code=404, detail=f"فایل عکس محصول با id={product_id} پیدا نشد.")
 
     return image_file_to_data_url(garment_disk_path)
+
+
+def get_garment_info(db: Session, product_id: int) -> dict:
+    """
+    مثل get_garment_data_url ولی علاوه بر تصویر، اسم و دسته‌بندی محصول رو هم
+    برمی‌گردونه تا بشه توی گزارش پیشرفت (log) پیام‌های خواناتری نشون داد
+    (مثلاً «کاپشن Zara» به‌جای «لباس شماره ۲»).
+    """
+    product = repository.get_by_id(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail=f"محصول با id={product_id} پیدا نشد.")
+
+    if not product.images:
+        raise HTTPException(status_code=400, detail=f"محصول با id={product_id} عکس ندارد.")
+
+    main_image = next((img for img in product.images if img.is_main), product.images[0])
+    garment_disk_path = main_image.image_url.lstrip("/")
+
+    if not os.path.exists(garment_disk_path):
+        raise HTTPException(status_code=404, detail=f"فایل عکس محصول با id={product_id} پیدا نشد.")
+
+    return {
+        "data_url": image_file_to_data_url(garment_disk_path),
+        "name": product.name or "این لباس",
+        "brand": product.brand or "",
+    }
 
 
 def save_result_image(result_b64: str) -> str:
@@ -568,20 +642,153 @@ def apply_single_garment(
     return compress_data_url(result_data_url)
 
 
+# پیام‌های «در حال انجام» و «انجام شد» برای هر مرحله، با لحن پرانرژی و
+# شبیه گزارش زنده‌ی هوش‌مصنوعی (به‌همراه ایموجی) تا توی فرانت به‌جای یه
+# اسپینر خشک، یه گزارش خواندنی و رنگین نشون داده بشه.
+STEP_START_TEMPLATES = [
+    "🧵 در حال تحلیل بافت، رنگ و دوخت «{name}»...",
+    "🎨 در حال تطبیق «{name}» با فرم بدن و نور تصویر شما...",
+    "🪄 هوش مصنوعی داره «{name}» رو با دقت روی تصویرتون پیاده می‌کنه...",
+]
+STEP_DONE_TEMPLATES = [
+    "✅ «{name}» با موفقیت روی تصویر شما اعمال شد.",
+    "✨ «{name}» آماده‌ست — رفتیم سراغ مرحله‌ی بعد.",
+]
+
+
+def _process_outfit_job(
+    job_id: str,
+    unique_product_ids: List[int],
+    person_data_url: str,
+) -> None:
+    """
+    تابعی که در پس‌زمینه (بعد از این‌که جواب HTTP اولیه با job_id فرستاده شد)
+    اجرا می‌شه. چون توی یک ترد جدا و بعد از پایان request اصلیه، نمی‌تونیم از
+    db session خودِ request استفاده کنیم؛ پس یه session تازه می‌سازیم.
+    """
+    _append_job_log(job_id, "🔍 در حال بررسی عکس شما...")
+
+    db = SessionLocal()
+    try:
+        garments = [
+            get_garment_info(db, product_id)
+            for product_id in unique_product_ids
+        ]
+    except HTTPException as e:
+        _set_job(
+            job_id,
+            status="error",
+            status_code=e.status_code,
+            error=e.detail,
+            finished_at=time.time(),
+        )
+        return
+    except Exception as e:
+        _set_job(
+            job_id,
+            status="error",
+            status_code=502,
+            error=f"خطا در خواندن اطلاعات محصولات: {e}",
+            finished_at=time.time(),
+        )
+        return
+    finally:
+        db.close()
+
+    try:
+        ensure_person_image(person_data_url)
+    except HTTPException as e:
+        _set_job(
+            job_id,
+            status="error",
+            status_code=e.status_code,
+            error=e.detail,
+            finished_at=time.time(),
+        )
+        return
+
+    _append_job_log(job_id, "✅ عکس شما تایید شد؛ شروع به کار می‌کنیم.")
+
+    total_steps = len(garments)
+    current_data_url = person_data_url
+
+    _set_job(job_id, status="processing", step=0, total_steps=total_steps)
+
+    for step, garment in enumerate(garments, start=1):
+        display_name = garment["name"]
+        if garment.get("brand"):
+            display_name = f"{display_name} {garment['brand']}"
+
+        start_msg = STEP_START_TEMPLATES[(step - 1) % len(STEP_START_TEMPLATES)].format(
+            name=display_name
+        )
+        _set_job(job_id, step=step)
+        _append_job_log(job_id, start_msg)
+
+        try:
+            current_data_url = apply_single_garment(
+                current_data_url, garment["data_url"], step, total_steps
+            )
+        except HTTPException as e:
+            _append_job_log(job_id, f"❌ اعمال «{display_name}» ناموفق بود.")
+            _set_job(
+                job_id,
+                status="error",
+                status_code=e.status_code,
+                error=e.detail,
+                finished_at=time.time(),
+            )
+            return
+        except Exception as e:
+            print("=== TRYON OUTFIT JOB EXCEPTION ===")
+            print(f"job {job_id} step {step}/{total_steps}:", repr(e))
+            print("=== END EXCEPTION ===")
+            _append_job_log(job_id, f"❌ اعمال «{display_name}» ناموفق بود.")
+            _set_job(
+                job_id,
+                status="error",
+                status_code=502,
+                error=f"خطا در تماس با سرویس تولید عکس (لباس {step} از {total_steps}): {e}",
+                finished_at=time.time(),
+            )
+            return
+
+        done_msg = STEP_DONE_TEMPLATES[(step - 1) % len(STEP_DONE_TEMPLATES)].format(
+            name=display_name
+        )
+        _append_job_log(job_id, done_msg)
+
+    _append_job_log(job_id, "🎉 ست کامل شما آماده‌ست!")
+    result_url = save_result_image(current_data_url)
+    _set_job(
+        job_id,
+        status="done",
+        result_image_url=result_url,
+        finished_at=time.time(),
+    )
+
+
 @router.post("/outfit")
 async def try_on_outfit(
+    background_tasks: BackgroundTasks,
     product_ids: List[int] = Form(...),
     person_image: UploadFile = File(...),
-    db: Session = Depends(get_db),
 ):
     """
-    دو یا سه لباس را روی عکس کاربر اعمال می‌کند.
+    شروع پردازش پس‌زمینه‌ی «امتحان ست» (۲ یا ۳ لباس روی عکس کاربر).
 
-    به‌جای فرستادن همه‌ی مرجع‌های لباس در یک درخواست بزرگ به مدل (که باعث
-    می‌شد گاهی هویت فرد کاملاً عوض بشه)، هر لباس را در یک مرحله‌ی جداگانه و
-    پشت‌سرهم روی خروجی مرحله‌ی قبل اعمال می‌کنیم — دقیقاً همون روشی که توی
-    اندپوینت تک‌محصولی («/tryon/») پایدار و درست کار می‌کند.
+    این اندپوینت دیگه منتظر تموم‌شدن کل پردازش نمی‌مونه (که می‌تونست چند
+    دقیقه طول بکشه و باعث بشه گیت‌وی/پروکسی پلتفرم میزبانی کانکشن رو وسط راه
+    قطع کنه). به‌جاش فوری یه job_id برمی‌گردونه؛ فرانت باید با
+    «GET /tryon/outfit/status/{job_id}» وضعیتش رو پیگیری (poll) کنه تا آماده
+    بشه.
+
+    هر لباس در یک مرحله‌ی جداگانه و پشت‌سرهم روی خروجی مرحله‌ی قبل اعمال
+    می‌شه — دقیقاً همون روشی که توی اندپوینت تک‌محصولی («/tryon/») پایدار و
+    درست کار می‌کنه.
     """
+    _cleanup_old_jobs()
+
     # حذف شناسه‌های تکراری بدون تغییر ترتیب
     unique_product_ids = list(dict.fromkeys(product_ids))
 
@@ -597,33 +804,51 @@ async def try_on_outfit(
             detail="در هر بار پرو مجازی حداکثر سه محصول پشتیبانی می‌شود.",
         )
 
-    garment_data_urls = [
-        get_garment_data_url(db, product_id)
-        for product_id in unique_product_ids
-    ]
-
+    # عکس کاربر رو همین‌جا (سریع) می‌خونیم، چون بعد از برگردوندن جواب دیگه
+    # به UploadFile اصلی دسترسی نداریم.
     person_bytes = await person_image.read()
     person_data_url = upload_file_to_data_url(person_image, person_bytes)
 
-    await run_in_threadpool(ensure_person_image, person_data_url)
+    job_id = str(uuid.uuid4())
+    with _outfit_jobs_lock:
+        _outfit_jobs[job_id] = {
+            "status": "pending",
+            "step": 0,
+            "total_steps": len(unique_product_ids),
+            "result_image_url": None,
+            "error": None,
+            "status_code": None,
+            "finished_at": None,
+            "logs": [],
+        }
 
-    total_steps = len(garment_data_urls)
-    current_data_url = person_data_url
+    background_tasks.add_task(
+        _process_outfit_job, job_id, unique_product_ids, person_data_url
+    )
 
-    for step, garment_data_url in enumerate(garment_data_urls, start=1):
-        try:
-            current_data_url = await run_in_threadpool(
-                apply_single_garment, current_data_url, garment_data_url, step, total_steps
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            print("=== TRYON OUTFIT EXCEPTION ===")
-            print(f"step {step}/{total_steps}:", repr(e))
-            print("=== END EXCEPTION ===")
-            raise HTTPException(
-                status_code=502,
-                detail=f"خطا در تماس با سرویس تولید عکس (لباس {step} از {total_steps}): {e}",
-            )
+    return {"job_id": job_id}
 
-    return {"result_image_url": save_result_image(current_data_url)}
+
+@router.get("/outfit/status/{job_id}")
+def get_outfit_job_status(job_id: str):
+    with _outfit_jobs_lock:
+        job = _outfit_jobs.get(job_id)
+        # یه کپی از logs می‌گیریم تا بیرون از قفل هم امن باشه
+        logs = list(job["logs"]) if job else []
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="این job پیدا نشد یا منقضی شده.")
+
+    if job["status"] == "error":
+        raise HTTPException(
+            status_code=job.get("status_code") or 502,
+            detail=job.get("error") or "خطای نامشخص در پردازش.",
+        )
+
+    return {
+        "status": job["status"],
+        "step": job["step"],
+        "total_steps": job["total_steps"],
+        "result_image_url": job["result_image_url"],
+        "logs": logs,
+    }
