@@ -451,6 +451,123 @@ async def try_on(
     return {"result_image_url": save_result_image(result_b64)}
 
 
+def compress_data_url(data_url: str) -> str:
+    """
+    یه data URL (خروجی مرحله‌ی قبلی مدل) رو می‌گیره، دیکود می‌کنه، فشرده‌ش می‌کنه
+    (دقیقاً مثل عکس ورودی کاربر) و دوباره به data URL تبدیل می‌کنه. این کار باعث
+    می‌شه هر مرحله از زنجیره‌ی چندلباسی همون‌قدر سبک و سریع باشه که تک‌لباسی هست.
+    """
+    if data_url.startswith("data:"):
+        _, b64_data = data_url.split(",", 1)
+    else:
+        b64_data = data_url
+
+    raw = base64.b64decode(b64_data)
+    compressed = compress_image_bytes(raw)
+    encoded = base64.b64encode(compressed).decode("utf-8")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def apply_single_garment(
+    person_data_url: str, garment_data_url: str, step: int, total_steps: int
+) -> str:
+    """
+    دقیقاً همون منطقی که توی اندپوینت تک‌محصولی (/tryon/) درست و پایدار کار
+    می‌کنه رو اینجا هم به کار می‌بریم؛ چون تجربه نشون داده وقتی مدل فقط با
+    «عکس فرد + یک لباس» طرفه، هویت فرد رو با وفاداری بالا حفظ می‌کنه. برای
+    ست چندلباسی، به‌جای فرستادن همه‌ی مرجع‌های لباس در یک درخواست بزرگ (که
+    باعث می‌شد مدل گاهی کل فرد رو با یه عکس جدید/ژنریک عوض کنه)، لباس‌ها رو
+    یکی‌یکی و پشت‌سرهم روی خروجیِ مرحله‌ی قبل اعمال می‌کنیم.
+    """
+    step_context = (
+        (
+            f"This is step {step} of {total_steps} in building a complete outfit on this "
+            "same person; some of their clothing may have already been changed in an "
+            "earlier step. "
+        )
+        if total_steps > 1
+        else ""
+    )
+
+    content = [
+        {
+            "type": "text",
+            "text": (
+                f"{PERSON_VALIDATION_RULE}\n\n"
+                f"{step_context}"
+                "You are doing a virtual clothing try-on. Look at the new garment in the "
+                "second photo and determine which body region it naturally belongs to: "
+                "upper body/top, lower body/bottom, or an outer layer worn over the torso "
+                "(such as a jacket, coat, cardigan, overshirt, or blazer). Replace ONLY the "
+                "garment(s) currently on the person in that specific body region with this "
+                "new garment, so it fully takes its place there — no part of the previous "
+                "garment in that same region should remain visible underneath or peeking "
+                "out. Do NOT touch, remove, hide, or alter any clothing on other body "
+                "regions that is unrelated to this specific new garment — for example, if "
+                "this garment is a top, the person's existing pants/skirt and any outer "
+                "layer must stay exactly as they currently are, and vice versa. If this new "
+                "garment is an outer layer, it must be clearly visible over whatever is "
+                "already on the torso, not merged with or replacing the inner layer. "
+                "Fit the new garment naturally to the person's body shape and pose, as if "
+                "they are actually wearing it. Do not blend, layer, or overlay the new "
+                "garment on top of the old one in the same region — it must be a full "
+                "replacement in that region only. Do not invent or add any extra clothing "
+                "layer underneath the new garment — no black undershirt, black camisole, "
+                "black leggings, black sleeves, or any other filler garment that is not "
+                "part of the new garment itself. Fit and drape the new garment so that it "
+                "naturally covers the relevant part of the person's body the way a real "
+                "garment would when worn — even if the reference product photo shows it "
+                "hanging open or loose, adapt it on the person so it closes over and "
+                "covers appropriately, instead of leaving it open and exposing bare skin "
+                "underneath.\n\n"
+                "IDENTITY LOCK — READ CAREFULLY: The FIRST image is the one and only base "
+                "photo you are editing. The SECOND image is only a reference for the "
+                "garment's design (color, pattern, cut) — it may show a completely "
+                "different person, a mannequin, or no person at all, and that person or "
+                "mannequin must NEVER appear in your output. You must never copy, blend, "
+                "substitute, or take inspiration from any face, body, pose, or background "
+                "shown in the second image. Every pixel of your output outside the swapped "
+                "garment's own boundary must come from the FIRST image only. Keep "
+                "everything else about the photo exactly the same: the same face, facial "
+                "expression, hairstyle, body shape, skin tone, pose, camera angle, framing, "
+                "background, and lighting as the first photo. Do not beautify, retouch, "
+                "reshape, or alter the person in any way. The only difference between the "
+                "input and output photo should be the garment(s) specified above. Return a "
+                "single photorealistic result.\n\n"
+                f"{GARMENT_FIDELITY_RULE}\n\n"
+                f"{STRICT_NO_EXTRA_CHANGES_RULE}"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": person_data_url}},
+        {"type": "image_url", "image_url": {"url": garment_data_url}},
+    ]
+
+    completion = call_model_with_retries(content)
+
+    message = completion.choices[0].message
+    images = getattr(message, "images", None)
+
+    print(f"=== TRYON OUTFIT STEP {step}/{total_steps} RAW COMPLETION ===")
+    print("finish_reason:", completion.choices[0].finish_reason)
+    print("message.content:", message.content)
+    print("message.images:", bool(images))
+    print("=== END TRYON OUTFIT STEP RAW ===")
+
+    check_no_person_response(message)
+
+    if not images:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"هوش مصنوعی نتونست لباس شماره {step} از {total_steps} رو اعمال کنه. "
+                f"دوباره امتحان کن. (دلیل مدل: {message.content or completion.choices[0].finish_reason})"
+            ),
+        )
+
+    result_data_url = images[0]["image_url"]["url"]
+    return compress_data_url(result_data_url)
+
+
 @router.post("/outfit")
 async def try_on_outfit(
     product_ids: List[int] = Form(...),
@@ -458,11 +575,12 @@ async def try_on_outfit(
     db: Session = Depends(get_db),
 ):
     """
-    دو یا سه لباس را در یک درخواست روی عکس کاربر اعمال می‌کند.
+    دو یا سه لباس را روی عکس کاربر اعمال می‌کند.
 
-    ترتیب تصاویر بعد از عکس کاربر همان ترتیب product_ids است، اما مدل باید
-    جایگاه طبیعی هر لباس را از روی تصویر مرجع تشخیص دهد؛ مثلاً پایین‌تنه،
-    بالاتنه‌ی زیرین و لایه‌ی رویی.
+    به‌جای فرستادن همه‌ی مرجع‌های لباس در یک درخواست بزرگ به مدل (که باعث
+    می‌شد گاهی هویت فرد کاملاً عوض بشه)، هر لباس را در یک مرحله‌ی جداگانه و
+    پشت‌سرهم روی خروجی مرحله‌ی قبل اعمال می‌کنیم — دقیقاً همون روشی که توی
+    اندپوینت تک‌محصولی («/tryon/») پایدار و درست کار می‌کند.
     """
     # حذف شناسه‌های تکراری بدون تغییر ترتیب
     unique_product_ids = list(dict.fromkeys(product_ids))
@@ -489,105 +607,23 @@ async def try_on_outfit(
 
     await run_in_threadpool(ensure_person_image, person_data_url)
 
-    garment_count = len(garment_data_urls)
-    garment_word = "two" if garment_count == 2 else "three"
+    total_steps = len(garment_data_urls)
+    current_data_url = person_data_url
 
-    if garment_count == 3:
-        layering_rule = (
-            "This request contains THREE garment reference photos. You MUST use all three "
-            "garments in the final result; omitting even one garment is a failed result. "
-            "Normally these three references represent a bottom garment, an inner/top garment, "
-            "and an outer layer such as a jacket, coat, cardigan, overshirt, or blazer. Infer "
-            "the natural role of each garment from its reference photo. Put the inner garment "
-            "on the torso, put the outer garment visibly over it, and put the bottom garment "
-            "on the lower body. The outer layer must remain clearly visible in the output and "
-            "must not be silently dropped or replaced by the inner garment. The inner garment "
-            "may remain visible only where it naturally would be visible beneath an open or "
-            "partially open outer layer, such as at the collar, neckline, front opening, or "
-            "cuffs. Do not merge the inner and outer garments into one invented garment."
-        )
-    else:
-        layering_rule = (
-            "This request contains TWO garment reference photos. You MUST use both garments "
-            "in the final result; omitting either garment is a failed result. Infer the natural "
-            "role of each garment from its reference photo and wear them together in the "
-            "physically correct positions."
-        )
+    for step, garment_data_url in enumerate(garment_data_urls, start=1):
+        try:
+            current_data_url = await run_in_threadpool(
+                apply_single_garment, current_data_url, garment_data_url, step, total_steps
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            print("=== TRYON OUTFIT EXCEPTION ===")
+            print(f"step {step}/{total_steps}:", repr(e))
+            print("=== END EXCEPTION ===")
+            raise HTTPException(
+                status_code=502,
+                detail=f"خطا در تماس با سرویس تولید عکس (لباس {step} از {total_steps}): {e}",
+            )
 
-    content = [
-        {
-            "type": "text",
-            "text": (
-                f"{PERSON_VALIDATION_RULE}\n\n"
-                f"The FIRST image is the person's original photo. The following {garment_word} "
-                f"images are {garment_count} separate garment references. Replace the person's "
-                f"current clothing with ALL {garment_count} referenced garments in one single "
-                "photorealistic edit.\n\n"
-                f"{layering_rule}\n\n"
-                "REFERENCE ACCOUNTING — MANDATORY: Treat every garment reference image as a "
-                "required checklist item. Before returning the final image, verify that each "
-                "reference garment is visibly present on the person in its natural body position. "
-                "Do not ignore the last reference image. Do not choose only the easiest two "
-                "garments. Do not substitute one reference for another, and do not combine two "
-                "references into a newly invented design.\n\n"
-                "The new garments must fully replace the corresponding original clothes. No "
-                "unrelated part of the original top, jacket, trousers, skirt, collar, sleeves, "
-                "or hems may remain visible or peek through, except where an intentionally layered "
-                "new inner garment should naturally remain visible beneath a new outer garment. "
-                "Fit every garment naturally to the person's exact body shape and pose, with "
-                "realistic draping, folds, overlap, occlusion, lighting, and shadows.\n\n"
-                "Do not add filler clothing that is not among the supplied references. Do not "
-                "invent a black undershirt, camisole, leggings, sleeves, or any other extra item. "
-                "Keep the person's face, facial expression, hairstyle, body shape, skin tone, "
-                "pose, hands, camera angle, framing, background, and lighting as close to the "
-                "original photo as possible. Return exactly one photorealistic result image.\n\n"
-                f"{GARMENT_FIDELITY_RULE}\n\n"
-                f"{STRICT_NO_EXTRA_CHANGES_RULE}"
-            ),
-        },
-        {"type": "image_url", "image_url": {"url": person_data_url}},
-    ]
-
-    for garment_data_url in garment_data_urls:
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": garment_data_url},
-            }
-        )
-
-    try:
-        completion = await run_in_threadpool(call_model_with_retries, content)
-    except Exception as e:
-        print("=== TRYON OUTFIT EXCEPTION ===")
-        print(repr(e))
-        print("=== END EXCEPTION ===")
-        raise HTTPException(
-            status_code=502,
-            detail=f"خطا در تماس با سرویس تولید عکس: {e}",
-        )
-
-    message = completion.choices[0].message
-    images = getattr(message, "images", None)
-
-    print("=== TRYON OUTFIT RAW COMPLETION ===")
-    print("product_ids:", unique_product_ids)
-    print("garment_count:", garment_count)
-    print("finish_reason:", completion.choices[0].finish_reason)
-    print("message.content:", message.content)
-    print("message.images:", images)
-    print("=== END TRYON OUTFIT RAW ===")
-
-    check_no_person_response(message)
-
-    if not images:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "هوش مصنوعی نتونست عکس بسازه. دوباره امتحان کن. "
-                f"(دلیل مدل: {message.content or completion.choices[0].finish_reason})"
-            ),
-        )
-
-    result_b64 = images[0]["image_url"]["url"]
-    return {"result_image_url": save_result_image(result_b64)}
+    return {"result_image_url": save_result_image(current_data_url)}
