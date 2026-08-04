@@ -387,6 +387,28 @@ GARMENT_FIDELITY_RULE = (
     "possible."
 )
 
+# قانون جدا و صریح درباره‌ی آستین، چون مدل قبلاً چند بار به‌اشتباه آستین یک
+# کت/ژاکت بلندآستین رو حذف می‌کرد و اون رو به یه جلیقه‌ی بدون‌آستین تبدیل
+# می‌کرد (و به‌جاش آستین لباس زیرین رو به چشم می‌رسوند). این قانون رو
+# مجزا و با تأکید زیاد نگه می‌داریم چون این خطا مستقیماً جزو "طول آستین" هست
+# که در GARMENT_FIDELITY_RULE هم اشاره شده، ولی نیاز به تأکید مجزا داره.
+SLEEVE_FIDELITY_RULE = (
+    "SLEEVE ACCURACY — READ CAREFULLY: Look at the reference garment photo and determine "
+    "exactly how much of the arm it covers: sleeveless/no sleeves, short sleeves, "
+    "three-quarter sleeves, or long sleeves reaching the wrist. The garment you generate on "
+    "the person MUST have the exact same sleeve length and coverage as the reference photo — "
+    "if the reference garment has long sleeves, the output must show the person's arms fully "
+    "covered by that SAME garment's fabric, in its own color/material, all the way from the "
+    "shoulder to the wrist. Do NOT shorten, remove, or omit the sleeves of the new garment for "
+    "any reason, and do NOT turn a garment that has sleeves in the reference photo into a "
+    "sleeveless vest/gilet in the output. Do NOT let the sleeves of an inner layer (e.g. a "
+    "shirt or sweater already on the person) substitute for or stand in as the new garment's "
+    "own sleeves — if the new garment has sleeves, THIS garment's sleeves must be the ones "
+    "visible on the arms, not the inner layer's sleeves peeking out. Only render the arms as "
+    "bare or covered solely by an inner layer if the reference garment is itself genuinely "
+    "sleeveless in the reference photo."
+)
+
 # این خط به‌صورت مشترک به هر دو پرامپت (تک‌محصول و ست) اضافه می‌شه تا صریحاً
 # و با قاطعیت تأکید کنه که مدل هیچ تغییر دیگه‌ای غیر از عوض کردن لباس نده.
 STRICT_NO_EXTRA_CHANGES_RULE = (
@@ -448,81 +470,40 @@ PERSON_VALIDATION_RULE = (
 
 @router.post("/")
 async def try_on(
+    background_tasks: BackgroundTasks,
     product_id: int = Form(...),
     person_image: UploadFile = File(...),
-    db: Session = Depends(get_db),
 ):
-    garment_data_url = get_garment_data_url(db, product_id)
+    """
+    شروع پردازش پس‌زمینه‌ی «امتحان تک‌محصولی» — دقیقاً مثل «/tryon/outfit» ولی
+    با فقط یک لباس. اینجا هم دیگه منتظر تموم‌شدن کل پردازش نمی‌مونیم (که
+    می‌تونست چند ده ثانیه طول بکشه)، بلکه فوری یه job_id برمی‌گردونیم و فرانت
+    با «GET /tryon/status/{job_id}» وضعیت و گزارش زنده‌ی پیشرفت رو پیگیری
+    می‌کنه — همون تجربه‌ای که برای امتحانِ ست کامل هم وجود داره.
+    """
+    _cleanup_old_jobs()
 
     person_bytes = await person_image.read()
     person_data_url = upload_file_to_data_url(person_image, person_bytes)
 
-    await run_in_threadpool(ensure_person_image, person_data_url)
+    job_id = str(uuid.uuid4())
+    with _outfit_jobs_lock:
+        _outfit_jobs[job_id] = {
+            "status": "pending",
+            "step": 0,
+            "total_steps": 1,
+            "result_image_url": None,
+            "error": None,
+            "status_code": None,
+            "finished_at": None,
+            "logs": [],
+        }
 
-    content = [
-        {
-            "type": "text",
-            "text": (
-                f"{PERSON_VALIDATION_RULE}\n\n"
-                "You are doing a virtual clothing try-on. The person in the first photo is "
-                "currently wearing a garment (e.g. top, jacket, or dress) that needs to be "
-                "swapped out. Replace that current garment with the new garment shown in the "
-                "second photo, so the new garment fully takes its place — no part of the "
-                "original garment (collar, sleeve, hem, or any fabric) should remain visible "
-                "underneath or peeking out. Fit the new garment naturally to the person's body "
-                "shape and pose, as if they are actually wearing it. Do not blend, layer, or "
-                "overlay the new garment on top of the old one — it must be a full replacement. "
-                "Do not invent or add any extra clothing layer underneath the new garment — no "
-                "black undershirt, black camisole, black leggings, black sleeves, or any other "
-                "filler garment that is not part of the new garment itself. Fit and drape the new "
-                "garment so that it naturally covers the person's torso and body the way a real "
-                "garment would when worn — even if the reference product photo shows the garment "
-                "hanging open or loose (for example an open jacket or coat with nothing "
-                "underneath), adapt it on the person so it closes over and covers the front of "
-                "their body, instead of leaving it open and exposing bare skin or the torso "
-                "underneath. Do not add a separate undergarment to achieve this coverage — the "
-                "garment itself should be the thing covering the body. "
-                "Keep everything else about the photo exactly the same: the same face, facial "
-                "expression, hairstyle, body shape, skin tone, pose, camera angle, framing, "
-                "background, and lighting as the original photo. Do not beautify, retouch, "
-                "reshape, or alter the person in any way. The only difference between the input "
-                "and output photo should be the garment itself. Return a single photorealistic "
-                "result.\n\n"
-                f"{GARMENT_FIDELITY_RULE}\n\n"
-                f"{STRICT_NO_EXTRA_CHANGES_RULE}"
-            ),
-        },
-        {"type": "image_url", "image_url": {"url": person_data_url}},
-        {"type": "image_url", "image_url": {"url": garment_data_url}},
-    ]
+    background_tasks.add_task(
+        _process_tryon_job, job_id, [product_id], person_data_url
+    )
 
-    try:
-        completion = await run_in_threadpool(call_model_with_retries, content)
-    except Exception as e:
-        print("=== TRYON EXCEPTION ===")
-        print(repr(e))
-        print("=== END EXCEPTION ===")
-        raise HTTPException(status_code=502, detail=f"خطا در تماس با سرویس تولید عکس: {e}")
-
-    message = completion.choices[0].message
-    images = getattr(message, "images", None)
-
-    print("=== TRYON RAW COMPLETION ===")
-    print("finish_reason:", completion.choices[0].finish_reason)
-    print("message.content:", message.content)
-    print("message.images:", images)
-    print("=== END TRYON RAW ===")
-
-    check_no_person_response(message)
-
-    if not images:
-        raise HTTPException(
-            status_code=502,
-            detail=f"هوش مصنوعی نتونست عکس بسازه. دوباره امتحان کن. (دلیل مدل: {message.content or completion.choices[0].finish_reason})",
-        )
-
-    result_b64 = images[0]["image_url"]["url"]
-    return {"result_image_url": save_result_image(result_b64)}
+    return {"job_id": job_id}
 
 
 def compress_data_url(data_url: str) -> str:
@@ -609,6 +590,7 @@ def apply_single_garment(
                 "input and output photo should be the garment(s) specified above. Return a "
                 "single photorealistic result.\n\n"
                 f"{GARMENT_FIDELITY_RULE}\n\n"
+                f"{SLEEVE_FIDELITY_RULE}\n\n"
                 f"{STRICT_NO_EXTRA_CHANGES_RULE}"
             ),
         },
@@ -642,21 +624,21 @@ def apply_single_garment(
     return compress_data_url(result_data_url)
 
 
-# پیام‌های «در حال انجام» و «انجام شد» برای هر مرحله، با لحن پرانرژی و
-# شبیه گزارش زنده‌ی هوش‌مصنوعی (به‌همراه ایموجی) تا توی فرانت به‌جای یه
-# اسپینر خشک، یه گزارش خواندنی و رنگین نشون داده بشه.
+# پیام‌های «در حال انجام» و «انجام شد» برای هر مرحله. فرانت فقط آخرین پیام
+# رو (به‌صورت یک خط متنِ در حال تغییر) نشون می‌ده، نه کل تاریخچه؛ پس اینجا
+# دیگه از ایموجی/استیکر استفاده نمی‌کنیم و فقط خود متن ساده رو نگه می‌داریم.
 STEP_START_TEMPLATES = [
-    "🧵 در حال تحلیل بافت، رنگ و دوخت «{name}»...",
-    "🎨 در حال تطبیق «{name}» با فرم بدن و نور تصویر شما...",
-    "🪄 هوش مصنوعی داره «{name}» رو با دقت روی تصویرتون پیاده می‌کنه...",
+    "در حال تحلیل بافت، رنگ و دوخت «{name}»...",
+    "در حال تطبیق «{name}» با فرم بدن و نور تصویر شما...",
+    "هوش مصنوعی داره «{name}» رو با دقت روی تصویرتون پیاده می‌کنه...",
 ]
 STEP_DONE_TEMPLATES = [
-    "✅ «{name}» با موفقیت روی تصویر شما اعمال شد.",
-    "✨ «{name}» آماده‌ست — رفتیم سراغ مرحله‌ی بعد.",
+    "«{name}» با موفقیت روی تصویر شما اعمال شد.",
+    "«{name}» آماده‌ست — رفتیم سراغ مرحله‌ی بعد.",
 ]
 
 
-def _process_outfit_job(
+def _process_tryon_job(
     job_id: str,
     unique_product_ids: List[int],
     person_data_url: str,
@@ -665,8 +647,12 @@ def _process_outfit_job(
     تابعی که در پس‌زمینه (بعد از این‌که جواب HTTP اولیه با job_id فرستاده شد)
     اجرا می‌شه. چون توی یک ترد جدا و بعد از پایان request اصلیه، نمی‌تونیم از
     db session خودِ request استفاده کنیم؛ پس یه session تازه می‌سازیم.
+
+    این تابع هم برای امتحانِ تک‌محصولی (یک آیتم در unique_product_ids) و هم
+    برای امتحانِ ست کامل (۲ یا ۳ آیتم) استفاده می‌شه — منطق هر دو یکیه، فقط
+    تعداد مراحل فرق می‌کنه.
     """
-    _append_job_log(job_id, "🔍 در حال بررسی عکس شما...")
+    _append_job_log(job_id, "در حال بررسی عکس شما...")
 
     db = SessionLocal()
     try:
@@ -707,7 +693,7 @@ def _process_outfit_job(
         )
         return
 
-    _append_job_log(job_id, "✅ عکس شما تایید شد؛ شروع به کار می‌کنیم.")
+    _append_job_log(job_id, "عکس شما تایید شد؛ شروع به کار می‌کنیم.")
 
     total_steps = len(garments)
     current_data_url = person_data_url
@@ -730,7 +716,7 @@ def _process_outfit_job(
                 current_data_url, garment["data_url"], step, total_steps
             )
         except HTTPException as e:
-            _append_job_log(job_id, f"❌ اعمال «{display_name}» ناموفق بود.")
+            _append_job_log(job_id, f"اعمال «{display_name}» ناموفق بود.")
             _set_job(
                 job_id,
                 status="error",
@@ -743,7 +729,7 @@ def _process_outfit_job(
             print("=== TRYON OUTFIT JOB EXCEPTION ===")
             print(f"job {job_id} step {step}/{total_steps}:", repr(e))
             print("=== END EXCEPTION ===")
-            _append_job_log(job_id, f"❌ اعمال «{display_name}» ناموفق بود.")
+            _append_job_log(job_id, f"اعمال «{display_name}» ناموفق بود.")
             _set_job(
                 job_id,
                 status="error",
@@ -758,7 +744,8 @@ def _process_outfit_job(
         )
         _append_job_log(job_id, done_msg)
 
-    _append_job_log(job_id, "🎉 ست کامل شما آماده‌ست!")
+    final_msg = "عکس شما آماده‌ست!" if total_steps == 1 else "ست کامل شما آماده‌ست!"
+    _append_job_log(job_id, final_msg)
     result_url = save_result_image(current_data_url)
     _set_job(
         job_id,
@@ -823,14 +810,13 @@ async def try_on_outfit(
         }
 
     background_tasks.add_task(
-        _process_outfit_job, job_id, unique_product_ids, person_data_url
+        _process_tryon_job, job_id, unique_product_ids, person_data_url
     )
 
     return {"job_id": job_id}
 
 
-@router.get("/outfit/status/{job_id}")
-def get_outfit_job_status(job_id: str):
+def _get_job_status_response(job_id: str):
     with _outfit_jobs_lock:
         job = _outfit_jobs.get(job_id)
         # یه کپی از logs می‌گیریم تا بیرون از قفل هم امن باشه
@@ -850,5 +836,20 @@ def get_outfit_job_status(job_id: str):
         "step": job["step"],
         "total_steps": job["total_steps"],
         "result_image_url": job["result_image_url"],
+        # فرانت فقط آخرین خط رو نشون می‌ده؛ کل لیست هم برای دیباگ برگردونده می‌شه.
         "logs": logs,
+        "current_log": logs[-1] if logs else None,
     }
+
+
+# اندپوینت وضعیتِ مشترک برای هر دو نوع job (تک‌محصولی و ست کامل) — چون هر دو
+# با همون ساختار job داخل _outfit_jobs ذخیره می‌شن.
+@router.get("/status/{job_id}")
+def get_job_status(job_id: str):
+    return _get_job_status_response(job_id)
+
+
+# مسیر قدیمی هم برای سازگاری با فرانت‌های قدیمی‌تر نگه داشته می‌شه.
+@router.get("/outfit/status/{job_id}")
+def get_outfit_job_status(job_id: str):
+    return _get_job_status_response(job_id)
